@@ -6,9 +6,10 @@ usage() {
 Usage:
   scripts/run_fp4_checks_all_nodes.sh --hosts <h1,h2,...> --suite-dir <dir> [options]
 
-Runs FP4 checks per host:
-  1) DeepGEMM FP8xFP4 smoke/perf probe
-  2) Cluster Perf grouped GEMM benchmark (DeepGEMM path)
+Runs FP4 checks:
+  1) Cluster Perf grouped GEMM benchmark (DeepGEMM path) per host
+  2) DeepGEMM FP8xFP4 smoke/perf probe in paired rounds per host
+  3) Cross-host smoke skew guard on median TFLOPS
 
 Outputs are written under:
   results/raw/
@@ -23,7 +24,7 @@ Options:
   --ssh-user <user>      SSH user (default: ubuntu)
   --ssh-key <path>       SSH key (default: $SSH_KEY)
   --remote-root <path>   Repo root on remote hosts (default: this repo root)
-  --image <image>        Container image (default: ghcr.io/jordannanos/cmax-compute:latest)
+  --image <image>        Container image (required; or set CONTAINER_IMAGE)
   --preset <name>        Grouped-GEMM preset (default: auto; GB-family hosts use all)
   --warmup <n>           Grouped-GEMM warmup (default: 5)
   --iters <n>            Grouped-GEMM measured iterations (default: 30)
@@ -33,6 +34,9 @@ Options:
   --smoke-k <int>        Smoke shape K (default: 4096)
   --smoke-warmup <n>     Smoke warmup (default: 10)
   --smoke-iters <n>      Smoke measured iterations (default: 30)
+  --smoke-rounds <n>     Paired smoke rounds per host for skew guard (default: 3)
+  --smoke-skew-threshold-pct <pct>
+                        Fail when max pairwise median smoke gap exceeds this percent (default: 5)
 
 Bootstrap (recommended for reproducibility; default: enabled):
   --bootstrap-nodes                Run per-node bootstrap before FP4 checks
@@ -56,7 +60,7 @@ SUITE_DIR=""
 SSH_USER="ubuntu"
 SSH_KEY="${SSH_KEY:-}"
 REMOTE_ROOT="${REMOTE_ROOT:-$ROOT_DIR}"
-IMAGE="${CONTAINER_IMAGE:-ghcr.io/jordannanos/cmax-compute:latest}"
+IMAGE="${CONTAINER_IMAGE:-}"
 PRESET="auto"
 WARMUP="5"
 ITERS="30"
@@ -66,6 +70,8 @@ SMOKE_N="4096"
 SMOKE_K="4096"
 SMOKE_WARMUP="10"
 SMOKE_ITERS="30"
+SMOKE_ROUNDS="3"
+SMOKE_SKEW_THRESHOLD_PCT="5"
 BOOTSTRAP_NODES=1
 BOOTSTRAP_INSTALL_SYSTEM_PACKAGES=1
 BOOTSTRAP_SYNC_CODE=1
@@ -92,6 +98,8 @@ while [[ $# -gt 0 ]]; do
     --smoke-k) SMOKE_K="${2:-}"; shift 2 ;;
     --smoke-warmup) SMOKE_WARMUP="${2:-}"; shift 2 ;;
     --smoke-iters) SMOKE_ITERS="${2:-}"; shift 2 ;;
+    --smoke-rounds) SMOKE_ROUNDS="${2:-}"; shift 2 ;;
+    --smoke-skew-threshold-pct) SMOKE_SKEW_THRESHOLD_PCT="${2:-}"; shift 2 ;;
     --bootstrap-nodes) BOOTSTRAP_NODES=1; shift ;;
     --skip-bootstrap-nodes) BOOTSTRAP_NODES=0; shift ;;
     --bootstrap-install-system-packages) BOOTSTRAP_INSTALL_SYSTEM_PACKAGES=1; shift ;;
@@ -107,6 +115,15 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+if ! [[ "$SMOKE_ROUNDS" =~ ^[0-9]+$ ]] || [[ "$SMOKE_ROUNDS" -lt 1 ]]; then
+  echo "ERROR: --smoke-rounds must be an integer >= 1 (got: ${SMOKE_ROUNDS})" >&2
+  exit 2
+fi
+if ! [[ "$SMOKE_SKEW_THRESHOLD_PCT" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+  echo "ERROR: --smoke-skew-threshold-pct must be a non-negative number (got: ${SMOKE_SKEW_THRESHOLD_PCT})" >&2
+  exit 2
+fi
+
 if [[ -z "$HOSTS" ]]; then
   echo "ERROR: --hosts is required" >&2
   usage >&2
@@ -114,6 +131,11 @@ if [[ -z "$HOSTS" ]]; then
 fi
 if [[ -z "$SUITE_DIR" ]]; then
   echo "ERROR: --suite-dir is required" >&2
+  usage >&2
+  exit 2
+fi
+if [[ -z "$IMAGE" ]]; then
+  echo "ERROR: --image is required (or set CONTAINER_IMAGE)." >&2
   usage >&2
   exit 2
 fi
@@ -240,8 +262,167 @@ fetch_remote_artifact() {
   local dst_dir
   dst_dir="${ROOT_DIR}/$(dirname "$rel_path")"
   mkdir -p "$dst_dir"
-  scp "${SSH_OPTS[@]}" "${SSH_USER}@${host}:${REMOTE_ROOT}/${rel_path}" "${dst_dir}/" >/dev/null 2>&1 || true
+  if ! scp "${SSH_OPTS[@]}" "${SSH_USER}@${host}:${REMOTE_ROOT}/${rel_path}" "${dst_dir}/" >/dev/null 2>&1; then
+    echo "ERROR: failed to fetch ${rel_path} from ${host}" >&2
+    return 1
+  fi
+  if [[ ! -f "${ROOT_DIR}/${rel_path}" ]]; then
+    echo "ERROR: fetched artifact missing locally after copy: ${rel_path}" >&2
+    return 1
+  fi
 }
+
+verify_local_artifact() {
+  local rel_path="$1"
+  if [[ ! -f "${ROOT_DIR}/${rel_path}" ]]; then
+    echo "ERROR: expected artifact not found: ${rel_path}" >&2
+    return 1
+  fi
+}
+
+write_smoke_skew_guard() {
+  local root_dir="$1"
+  local out_path="$2"
+  local run_id="$3"
+  local threshold_pct="$4"
+  local smoke_rounds="$5"
+  local labels_csv="$6"
+
+  python3 - "$root_dir" "$out_path" "$run_id" "$threshold_pct" "$smoke_rounds" "$labels_csv" <<'PY'
+import itertools
+import json
+import statistics
+import sys
+import time
+from pathlib import Path
+
+root_dir, out_path, run_id, threshold_pct_raw, smoke_rounds_raw, labels_csv = sys.argv[1:]
+threshold_pct = float(threshold_pct_raw)
+smoke_rounds = int(smoke_rounds_raw)
+labels = [x.strip() for x in labels_csv.split(",") if x.strip()]
+
+root = Path(root_dir)
+structured = root / "results" / "structured"
+
+def load_tflops(path: Path) -> float:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    return float(payload["results"]["deepgemm_fp8_fp4"]["avg_tflops"])
+
+per_host = {}
+for label in labels:
+    rounds = []
+    for round_id in range(1, smoke_rounds + 1):
+        smoke_json = structured / f"{run_id}_r{round_id}_{label}_cluster_perf_fp4_smoke.json"
+        rounds.append(
+            {
+                "round": round_id,
+                "smoke_json": str(smoke_json),
+                "deepgemm_avg_tflops": load_tflops(smoke_json),
+            }
+        )
+    values = [entry["deepgemm_avg_tflops"] for entry in rounds]
+    per_host[label] = {
+        "rounds": rounds,
+        "deepgemm_avg_tflops": {
+            "mean": float(statistics.mean(values)),
+            "median": float(statistics.median(values)),
+            "min": float(min(values)),
+            "max": float(max(values)),
+        },
+    }
+
+pairwise = []
+max_gap_pct = 0.0
+max_gap_pair = None
+for a, b in itertools.combinations(labels, 2):
+    med_a = per_host[a]["deepgemm_avg_tflops"]["median"]
+    med_b = per_host[b]["deepgemm_avg_tflops"]["median"]
+    denom = max(med_a, med_b)
+    gap_pct = 0.0 if denom == 0 else (abs(med_a - med_b) / denom) * 100.0
+    row = {
+        "pair": [a, b],
+        "median_tflops": {a: med_a, b: med_b},
+        "median_gap_pct": gap_pct,
+    }
+    pairwise.append(row)
+    if gap_pct > max_gap_pct:
+        max_gap_pct = gap_pct
+        max_gap_pair = [a, b]
+
+status = "pass"
+reason = "max_pairwise_median_gap_within_threshold"
+if len(labels) > 1 and max_gap_pct > threshold_pct:
+    status = "fail"
+    reason = "max_pairwise_median_gap_exceeds_threshold"
+elif len(labels) <= 1:
+    reason = "single_host_no_pairwise_comparison"
+
+payload = {
+    "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+    "run_id": run_id,
+    "smoke_rounds": smoke_rounds,
+    "smoke_skew_threshold_pct": threshold_pct,
+    "labels": labels,
+    "status": status,
+    "reason": reason,
+    "max_pairwise_median_gap_pct": max_gap_pct,
+    "max_pairwise_median_gap_pair": max_gap_pair,
+    "pairwise_median_gaps": pairwise,
+    "per_host": per_host,
+}
+
+out = Path(out_path)
+out.parent.mkdir(parents=True, exist_ok=True)
+out.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+
+print(f"status={status}")
+print(f"max_pairwise_median_gap_pct={max_gap_pct:.6f}")
+if max_gap_pair:
+    print(f"max_pairwise_pair={','.join(max_gap_pair)}")
+print(f"guard_json={out_path}")
+
+if status == "fail":
+    raise SystemExit(1)
+PY
+}
+
+trim_csv() {
+  local csv="$1"
+  local out=()
+  local part
+  IFS=',' read -r -a _parts <<<"$csv"
+  for part in "${_parts[@]}"; do
+    part="$(echo "$part" | xargs)"
+    if [[ -n "$part" ]]; then
+      out+=("$part")
+    fi
+  done
+  local joined=""
+  local item
+  for item in "${out[@]}"; do
+    if [[ -n "$joined" ]]; then
+      joined+=","
+    fi
+    joined+="$item"
+  done
+  printf '%s' "$joined"
+}
+
+fetch_and_verify_if_remote() {
+  local host="$1"
+  local rel_path="$2"
+  if [[ "$host" != "localhost" && "$host" != "$(hostname)" ]]; then
+    fetch_remote_artifact "$host" "$rel_path"
+  fi
+  verify_local_artifact "$rel_path"
+}
+
+TRIMMED_LABELS="$LABELS"
+if [[ -n "$LABELS" ]]; then
+  TRIMMED_LABELS="$(trim_csv "$LABELS")"
+fi
+
+echo "FP4 smoke guard config: rounds=${SMOKE_ROUNDS} max_pairwise_median_gap_pct=${SMOKE_SKEW_THRESHOLD_PCT}"
 
 for idx in "${!HOST_ARR[@]}"; do
   host="$(echo "${HOST_ARR[$idx]}" | xargs)"
@@ -290,18 +471,8 @@ for idx in "${!HOST_ARR[@]}"; do
   gpu_names_b64="$(printf '%s' "$gpu_names" | base64 | tr -d '\n')"
   write_platform_meta "$platform_meta_abs" "$host" "$label" "$PRESET" "$host_preset" "$gb_sku" "$SUITE_DIR" "$IMAGE" "$gpu_names_b64"
   echo "Platform meta: ${platform_meta_rel}"
+  verify_local_artifact "${platform_meta_rel}"
 
-  smoke_args=(
-    scripts/run_cluster_perf_fp4_smoke.sh
-    --run-id "${RUN_ID}"
-    --label "${label}"
-    --image "${IMAGE}"
-    --m "${SMOKE_M}"
-    --n "${SMOKE_N}"
-    --k "${SMOKE_K}"
-    --warmup "${SMOKE_WARMUP}"
-    --iters "${SMOKE_ITERS}"
-  )
   grouped_args=(
     scripts/run_cluster_perf_grouped_gemm.sh
     --suite-dir "${SUITE_DIR}"
@@ -313,27 +484,77 @@ for idx in "${!HOST_ARR[@]}"; do
     --image "${IMAGE}"
   )
 
-  smoke_str="$(printf '%q ' "${smoke_args[@]}")"
   grouped_str="$(printf '%q ' "${grouped_args[@]}")"
-  remote_cmd="cd $(printf '%q' "${REMOTE_ROOT}") && "
-  if [[ "$SKIP_SMOKE" -eq 0 ]]; then
-    remote_cmd+="${smoke_str} && "
-  fi
-  remote_cmd+="${grouped_str}"
+  remote_cmd="cd $(printf '%q' "${REMOTE_ROOT}") && ${grouped_str}"
   run_host_cmd "$host" "$remote_cmd"
 
-  if [[ "$host" != "localhost" && "$host" != "$(hostname)" ]]; then
-    if [[ "$SKIP_SMOKE" -eq 0 ]]; then
-      fetch_remote_artifact "$host" "results/raw/${RUN_ID}_${label}_cluster_perf_fp4_smoke.log"
-      fetch_remote_artifact "$host" "results/structured/${RUN_ID}_${label}_cluster_perf_fp4_smoke.json"
-      fetch_remote_artifact "$host" "results/structured/${RUN_ID}_${label}_cluster_perf_fp4_smoke_clock_lock.json"
-    fi
-    fetch_remote_artifact "$host" "results/structured/${RUN_ID}_${label}_cluster_perf_grouped_gemm.txt"
-    fetch_remote_artifact "$host" "results/structured/${RUN_ID}_${label}_cluster_perf_grouped_gemm_summary.json"
-    fetch_remote_artifact "$host" "results/structured/${RUN_ID}_${label}_cluster_perf_grouped_gemm_clock_lock.json"
-    fetch_remote_artifact "$host" "docs/figures/${RUN_ID}_${label}_cluster_perf_grouped_gemm_tflops.png"
-  fi
+  fetch_and_verify_if_remote "$host" "results/structured/${RUN_ID}_${label}_cluster_perf_grouped_gemm.txt"
+  fetch_and_verify_if_remote "$host" "results/structured/${RUN_ID}_${label}_cluster_perf_grouped_gemm_summary.json"
+  fetch_and_verify_if_remote "$host" "results/structured/${RUN_ID}_${label}_cluster_perf_grouped_gemm_clock_lock.json"
+  fetch_and_verify_if_remote "$host" "docs/figures/${RUN_ID}_${label}_cluster_perf_grouped_gemm_tflops.png"
 done
+
+if [[ "$SKIP_SMOKE" -eq 0 ]]; then
+  for round in $(seq 1 "$SMOKE_ROUNDS"); do
+    echo "----------------------------------------"
+    echo "FP4 paired smoke round ${round}/${SMOKE_ROUNDS}"
+    for idx in "${!HOST_ARR[@]}"; do
+      host="$(echo "${HOST_ARR[$idx]}" | xargs)"
+      [[ -n "$host" ]] || continue
+
+      label=""
+      if [[ -n "$LABELS" ]]; then
+        label="$(echo "${LABEL_ARR[$idx]}" | xargs)"
+      fi
+      if [[ -z "$label" ]]; then
+        label="$(sanitize_label "$host")"
+      fi
+
+      round_run_id="${RUN_ID}_r${round}"
+      smoke_args=(
+        scripts/run_cluster_perf_fp4_smoke.sh
+        --run-id "${round_run_id}"
+        --label "${label}"
+        --image "${IMAGE}"
+        --m "${SMOKE_M}"
+        --n "${SMOKE_N}"
+        --k "${SMOKE_K}"
+        --warmup "${SMOKE_WARMUP}"
+        --iters "${SMOKE_ITERS}"
+      )
+      smoke_str="$(printf '%q ' "${smoke_args[@]}")"
+      remote_cmd="cd $(printf '%q' "${REMOTE_ROOT}") && ${smoke_str}"
+      run_host_cmd "$host" "$remote_cmd"
+
+      fetch_and_verify_if_remote "$host" "results/raw/${round_run_id}_${label}_cluster_perf_fp4_smoke.log"
+      fetch_and_verify_if_remote "$host" "results/structured/${round_run_id}_${label}_cluster_perf_fp4_smoke.json"
+      fetch_and_verify_if_remote "$host" "results/structured/${round_run_id}_${label}_cluster_perf_fp4_smoke_clock_lock.json"
+    done
+  done
+
+  guard_rel="results/structured/${RUN_ID}_fp4_smoke_skew_guard.json"
+  echo "Evaluating FP4 smoke skew guard (rounds=${SMOKE_ROUNDS}, threshold_pct=${SMOKE_SKEW_THRESHOLD_PCT})..."
+  if [[ -n "$TRIMMED_LABELS" ]]; then
+    guard_labels="$TRIMMED_LABELS"
+  else
+    guard_labels=""
+    for idx in "${!HOST_ARR[@]}"; do
+      host="$(echo "${HOST_ARR[$idx]}" | xargs)"
+      [[ -n "$host" ]] || continue
+      label="$(sanitize_label "$host")"
+      if [[ -n "$guard_labels" ]]; then
+        guard_labels+=","
+      fi
+      guard_labels+="$label"
+    done
+  fi
+
+  if ! write_smoke_skew_guard "${ROOT_DIR}" "${ROOT_DIR}/${guard_rel}" "${RUN_ID}" "${SMOKE_SKEW_THRESHOLD_PCT}" "${SMOKE_ROUNDS}" "${guard_labels}"; then
+    echo "ERROR: FP4 smoke skew guard failed. See ${guard_rel}" >&2
+    exit 1
+  fi
+  echo "FP4 smoke skew guard passed: ${guard_rel}"
+fi
 
 echo ""
 echo "FP4 checks complete."

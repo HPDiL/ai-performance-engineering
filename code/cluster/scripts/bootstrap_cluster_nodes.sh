@@ -240,8 +240,11 @@ EOF
     missing_pkgs+=("cuda-toolkit-13-0")
   fi
   # Nsight tools are required by profiling workflows in this repo.
-  if [[ -z "$(check_cmd_path "$host" "ncu")" || -z "$(check_cmd_path "$host" "nsys")" ]]; then
-    missing_pkgs+=("cuda-toolkit-13-0")
+  if [[ -z "$(check_cmd_path "$host" "ncu")" ]]; then
+    missing_pkgs+=("cuda-nsight-compute-13-0")
+  fi
+  if [[ -z "$(check_cmd_path "$host" "nsys")" ]]; then
+    missing_pkgs+=("cuda-nsight-systems-13-0")
   fi
 
   if [[ "${#missing_pkgs[@]}" -eq 0 ]]; then
@@ -258,6 +261,9 @@ EOF
   fi
 
   run_host_cmd "$host" "sudo DEBIAN_FRONTEND=noninteractive apt-get update >/dev/null && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ${unique_pkgs} >/dev/null"
+  # Some CUDA apt packages install Nsight Compute under /usr/local/cuda-*/bin
+  # without adding it to PATH. Expose `ncu` on PATH for harness tooling.
+  run_host_cmd "$host" "if ! command -v ncu >/dev/null 2>&1; then for p in /usr/local/cuda/bin/ncu /usr/local/cuda-13.0/bin/ncu /usr/local/cuda-13.1/bin/ncu; do if [[ -x \"\$p\" ]]; then sudo ln -sf \"\$p\" /usr/local/bin/ncu; break; fi; done; fi"
   echo "$unique_pkgs"
 }
 

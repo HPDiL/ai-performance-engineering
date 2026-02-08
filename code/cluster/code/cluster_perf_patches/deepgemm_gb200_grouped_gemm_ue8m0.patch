@@ -1,5 +1,5 @@
---- code/clustermax_scp_node2_2026-02-08_031318/standalone/compute/gemm-bench/grouped_gemm_bench.py	2026-02-05 20:57:48.000000000 +0000
-+++ code/clustermax_from_node2/standalone/compute/gemm-bench/grouped_gemm_bench.py	2026-02-08 07:49:02.337599938 +0000
+--- code/cluster_perf_suite_snapshot/standalone/compute/gemm-bench/grouped_gemm_bench.py	2026-02-05 20:57:48.000000000 +0000
++++ code/cluster_perf_suite/standalone/compute/gemm-bench/grouped_gemm_bench.py	2026-02-08 07:49:02.337599938 +0000
 @@ -37,6 +37,7 @@
  # Check for optional dependencies
  HAS_MATPLOTLIB = False

@@ -18,8 +18,8 @@ JSON_OUT = ROOT / "results/structured/2026-02-08_operator_state_snapshot.json"
 
 
 NODE_META = {
-    "node1": ROOT / "results/structured/2026-02-08_032814_neocloud_eval_full_fixed_node1_meta.json",
-    "node2": ROOT / "results/structured/2026-02-08_032814_neocloud_eval_full_fixed_node2_meta.json",
+    "node1": ROOT / "results/structured/2026-02-08_032814_cloud_eval_full_fixed_node1_meta.json",
+    "node2": ROOT / "results/structured/2026-02-08_032814_cloud_eval_full_fixed_node2_meta.json",
 }
 NUMACTL_EVIDENCE = {
     "node1": ROOT / "results/structured/2026-02-08_numactl_numa_evidence_node1.txt",
@@ -30,8 +30,8 @@ IBSTAT_EVIDENCE = {
     "node2": ROOT / "results/structured/2026-02-08_ibstat_evidence_node2.txt",
 }
 STORAGE_META = {
-    "node1": ROOT / "results/structured/2026-02-08_032814_neocloud_eval_full_fixed_node1_storage.json",
-    "node2": ROOT / "results/structured/2026-02-08_032814_neocloud_eval_full_fixed_node2_storage.json",
+    "node1": ROOT / "results/structured/2026-02-08_032814_cloud_eval_full_fixed_node1_storage.json",
+    "node2": ROOT / "results/structured/2026-02-08_032814_cloud_eval_full_fixed_node2_storage.json",
 }
 SHARP_JSON = ROOT / "results/structured/2026-02-08_082000_ib_sharp_check_v3_ib_sharp_check.json"
 

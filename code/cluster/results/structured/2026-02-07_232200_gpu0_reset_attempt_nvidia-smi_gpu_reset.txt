@@ -1,2 +1,0 @@
-GPU 00000008:01:00.0 was successfully reset.
-All done.

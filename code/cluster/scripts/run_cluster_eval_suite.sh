@@ -52,7 +52,7 @@ Options:
   --enable-fp4             Run FP4 checks on all nodes (default: on)
   --disable-fp4            Disable FP4 checks
   --fp4-suite-dir <dir>    Cluster Perf suite dir on each host (default: auto-detect or $CLUSTER_PERF_SUITE_DIR)
-  --fp4-image <image>      FP4 container image (default: ghcr.io/jordannanos/cmax-compute:latest)
+  --fp4-image <image>      FP4 container image (required when FP4 is enabled, or set CONTAINER_IMAGE)
   --fp4-preset <name>      Grouped-GEMM preset for FP4 check (default: auto; GB-family uses all)
   --fp4-warmup <n>         Grouped-GEMM warmup for FP4 check (default: 5)
   --fp4-iters <n>          Grouped-GEMM measured iterations for FP4 check (default: 30)
@@ -61,6 +61,9 @@ Options:
   --fp4-smoke-k <int>      FP4 smoke shape K (default: 4096)
   --fp4-smoke-warmup <n>   FP4 smoke warmup iterations (default: 10)
   --fp4-smoke-iters <n>    FP4 smoke measured iterations (default: 30)
+  --fp4-smoke-rounds <n>   FP4 paired smoke rounds per host (default: 3)
+  --fp4-smoke-skew-threshold-pct <pct>
+                           Fail FP4 smoke guard when max pairwise median gap exceeds this percent (default: 5)
 
   --bootstrap-nodes                Bootstrap all nodes before checks (default: on)
   --skip-bootstrap-nodes           Skip node bootstrap
@@ -174,7 +177,7 @@ PORT="8888"
 
 ENABLE_FP4=1
 FP4_SUITE_DIR="${CLUSTER_PERF_SUITE_DIR:-}"
-FP4_IMAGE="${CONTAINER_IMAGE:-ghcr.io/jordannanos/cmax-compute:latest}"
+FP4_IMAGE="${CONTAINER_IMAGE:-}"
 FP4_PRESET="auto"
 FP4_WARMUP="5"
 FP4_ITERS="30"
@@ -183,6 +186,8 @@ FP4_SMOKE_N="4096"
 FP4_SMOKE_K="4096"
 FP4_SMOKE_WARMUP="10"
 FP4_SMOKE_ITERS="30"
+FP4_SMOKE_ROUNDS="3"
+FP4_SMOKE_SKEW_THRESHOLD_PCT="5"
 
 BOOTSTRAP_NODES=1
 BOOTSTRAP_INSTALL_SYSTEM_PACKAGES=1
@@ -293,6 +298,8 @@ while [[ $# -gt 0 ]]; do
     --fp4-smoke-k) FP4_SMOKE_K="$2"; shift 2 ;;
     --fp4-smoke-warmup) FP4_SMOKE_WARMUP="$2"; shift 2 ;;
     --fp4-smoke-iters) FP4_SMOKE_ITERS="$2"; shift 2 ;;
+    --fp4-smoke-rounds) FP4_SMOKE_ROUNDS="$2"; shift 2 ;;
+    --fp4-smoke-skew-threshold-pct) FP4_SMOKE_SKEW_THRESHOLD_PCT="$2"; shift 2 ;;
 
     --bootstrap-nodes) BOOTSTRAP_NODES=1; shift ;;
     --skip-bootstrap-nodes) BOOTSTRAP_NODES=0; shift ;;
@@ -410,8 +417,7 @@ fi
 
 if [[ "$ENABLE_FP4" -eq 1 && -z "$FP4_SUITE_DIR" ]]; then
   fp4_candidates=(
-    "${ROOT_DIR}/../clustermax_from_node2"
-    "${ROOT_DIR}/../clustermax"
+    "${ROOT_DIR}/../cluster_perf_suite"
   )
   for cand in "${fp4_candidates[@]}"; do
     if [[ -d "${cand}/standalone/compute" ]]; then
@@ -419,6 +425,12 @@ if [[ "$ENABLE_FP4" -eq 1 && -z "$FP4_SUITE_DIR" ]]; then
       break
     fi
   done
+fi
+
+if [[ "$ENABLE_FP4" -eq 1 && -z "$FP4_IMAGE" ]]; then
+  echo "ERROR: FP4 checks are enabled, but no FP4 container image was provided." >&2
+  echo "Set --fp4-image <image> (or CONTAINER_IMAGE), or pass --disable-fp4." >&2
+  exit 2
 fi
 
 if [[ "$ENABLE_FP4" -eq 1 && -z "$FP4_SUITE_DIR" ]]; then
@@ -520,7 +532,7 @@ echo "train_step: ${RUN_TRAIN_STEP} (single_node=${TRAIN_STEP_SINGLE_NODE} multi
 echo "checkpoint_io: ${RUN_CHECKPOINT_IO}"
 echo "fp4_checks: ${ENABLE_FP4} (suite_dir=${FP4_SUITE_DIR:-<unset>} preset=${FP4_PRESET} warmup=${FP4_WARMUP} iters=${FP4_ITERS})"
 if [[ "$ENABLE_FP4" -eq 1 ]]; then
-  echo "fp4_smoke: shape=${FP4_SMOKE_M}x${FP4_SMOKE_N}x${FP4_SMOKE_K} warmup=${FP4_SMOKE_WARMUP} iters=${FP4_SMOKE_ITERS} image=${FP4_IMAGE}"
+  echo "fp4_smoke: shape=${FP4_SMOKE_M}x${FP4_SMOKE_N}x${FP4_SMOKE_K} warmup=${FP4_SMOKE_WARMUP} iters=${FP4_SMOKE_ITERS} rounds=${FP4_SMOKE_ROUNDS} skew_threshold_pct=${FP4_SMOKE_SKEW_THRESHOLD_PCT} image=${FP4_IMAGE}"
 fi
 echo "bootstrap_nodes: ${BOOTSTRAP_NODES} (sync_code=${BOOTSTRAP_SYNC_CODE} system_packages=${BOOTSTRAP_INSTALL_SYSTEM_PACKAGES} python_deps=${BOOTSTRAP_INSTALL_PYTHON_DEPS})"
 if [[ "$BOOTSTRAP_NODES" -eq 1 && "$ENABLE_FP4" -eq 1 ]]; then
@@ -714,6 +726,8 @@ if [[ "$ENABLE_FP4" -eq 1 ]]; then
     --smoke-k "$FP4_SMOKE_K"
     --smoke-warmup "$FP4_SMOKE_WARMUP"
     --smoke-iters "$FP4_SMOKE_ITERS"
+    --smoke-rounds "$FP4_SMOKE_ROUNDS"
+    --smoke-skew-threshold-pct "$FP4_SMOKE_SKEW_THRESHOLD_PCT"
   )
   if [[ -n "$LABELS" ]]; then
     fp4_args+=(--labels "$LABELS")

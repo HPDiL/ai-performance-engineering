@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 
 
 ROOT = Path(__file__).resolve().parents[1]
-ON_SUMMARY = ROOT / "results/structured/2026-02-08_032814_neocloud_eval_full_fixed_health_suite_extended_node1node2_cluster_health_suite_summary.json"
+ON_SUMMARY = ROOT / "results/structured/2026-02-08_032814_cloud_eval_full_fixed_health_suite_extended_node1node2_cluster_health_suite_summary.json"
 OFF_SUMMARY = ROOT / "results/structured/2026-02-08_031531_health_suite_extended_nvls0_node1node2_cluster_health_suite_summary.json"
 OUT_FIG = ROOT / "docs/figures/2026-02-08_nvls_on_off_allreduce_busbw.png"
 OUT_JSON = ROOT / "results/structured/2026-02-08_nvls_on_off_allreduce_busbw.json"

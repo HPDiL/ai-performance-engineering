@@ -12,7 +12,7 @@ Key rule (GPU benchmarks):
 This runs discovery + NCCL (1 node + 2 nodes) + vLLM serving sweep + GEMM sanity + fio + plots + manifest refresh:
 ```bash
 scripts/run_cluster_eval_suite.sh \
-  --run-id 2026-02-07_neocloud_case_study \
+  --run-id 2026-02-07_cloud_eval_case_study \
   --hosts node1,node2 \
   --labels node1,node2 \
   --ssh-key ~/.ssh/ssh_key.pem \
@@ -36,6 +36,10 @@ Optional GB200-focused diagnostics can be toggled in the same suite run:
   --run-checkpoint-io --checkpoint-test-dir /tmp --checkpoint-bytes 4G
 ```
 FP4 checks are enabled by default in `run_cluster_eval_suite.sh`. To skip them, pass `--disable-fp4`.
+FP4 now includes a default paired-smoke skew guard (`--fp4-smoke-rounds 3`, `--fp4-smoke-skew-threshold-pct 5`): the run fails only when sustained cross-host skew is detected (max pairwise median gap > threshold).
+Node bootstrap is also enabled by default (`scripts/bootstrap_cluster_nodes.sh` via the suite), so dependency/setup drift is corrected before checks run. Per-node bootstrap artifacts are written as:
+`results/structured/<run_id>_<label>_bootstrap_status.json`.
+To skip bootstrap explicitly, pass `--skip-bootstrap-nodes`.
 Optional high-impact cross-reference diagnostics:
 ```bash
   --enable-mamf --mamf-mode quick --mamf-concurrent \
@@ -350,7 +354,7 @@ Outputs:
 `results/structured/<run_id>_<label>_checkpoint_io.csv`.
 
 ### 5k) FP4 Coverage (DeepGEMM FP8xFP4)
-Run FP4 smoke + grouped GEMM benchmark across all hosts:
+Run FP4 smoke (paired rounds + skew guard) + grouped GEMM benchmark across all hosts:
 ```bash
 scripts/run_fp4_checks_all_nodes.sh \
   --run-id <run_id> \
@@ -359,14 +363,33 @@ scripts/run_fp4_checks_all_nodes.sh \
   --ssh-key ~/.ssh/ssh_key.pem \
   --suite-dir /path/to/cluster_perf_suite \
   --preset auto \
+  --smoke-rounds 3 \
+  --smoke-skew-threshold-pct 5 \
   --warmup 5 \
   --iters 30
 ```
+Example suite path: `e.g. /path/to/clustermax` (set via `--suite-dir` or `CLUSTER_PERF_SUITE_DIR`).
 Outputs:
 `results/structured/<run_id>_<label>_cluster_perf_fp4_platform.json`,
-`results/structured/<run_id>_<label>_cluster_perf_fp4_smoke.json`,
+`results/structured/<run_id>_r<round>_<label>_cluster_perf_fp4_smoke.json`,
+`results/structured/<run_id>_r<round>_<label>_cluster_perf_fp4_smoke_clock_lock.json`,
+`results/structured/<run_id>_fp4_smoke_skew_guard.json`,
 `results/structured/<run_id>_<label>_cluster_perf_grouped_gemm_summary.json`,
 `docs/figures/<run_id>_<label>_cluster_perf_grouped_gemm_tflops.png`.
+
+### 5l) Bootstrap Nodes (Reproducibility)
+Run node bootstrap directly (code sync + system deps + Python deps + optional suite sync):
+```bash
+scripts/bootstrap_cluster_nodes.sh \
+  --run-id <run_id> \
+  --hosts node1,node2 \
+  --labels node1,node2 \
+  --ssh-key ~/.ssh/ssh_key.pem \
+  --sync-suite-dir /path/to/cluster_perf_suite
+```
+Example suite path: `e.g. /path/to/clustermax` (set via `--sync-suite-dir` or `CLUSTER_PERF_SUITE_DIR`).
+Outputs:
+`results/structured/<run_id>_<label>_bootstrap_status.json`.
 
 ### 6) Optional: Screenshot Repro Suite
 Runs the commands/benchmarks shown in the case-study screenshots and writes raw logs under `results/raw/` (gitignored):
@@ -388,3 +411,12 @@ cluster/
 
 ## Notes
 - `results/raw/` is intentionally gitignored; the field report should link only to `results/structured/` and `docs/figures/`.
+
+## Current Dependency Disclosure
+- Core runtime: NVIDIA GPU + CUDA + NVML + working `nvidia-smi`; benchmark paths require successful clock locking via `scripts/run_with_gpu_clocks.sh`.
+- Multi-node orchestration: passwordless SSH/SCP between hosts for all `*_all_nodes.sh` runners.
+- Network/system tools used by suite scripts: `nccl-tests`, `iperf3`, RDMA/IB tools (`ibstat`, `rdma`, perftest utilities), and `fio`.
+- Python runtime: `env/venv` with repo requirements and runnable `vllm` CLI for host-native vLLM scripts.
+- vLLM serving sweep (`scripts/repro/run_vllm_serve_sweep_container.sh`) currently depends on Docker + NVIDIA container runtime and `nvidia-persistenced`.
+- FP4 grouped GEMM checks (`scripts/run_cluster_perf_grouped_gemm.sh`, `scripts/run_fp4_checks_all_nodes.sh`, FP4 path in `scripts/run_cluster_eval_suite.sh`) currently depend on an external suite directory via `--suite-dir` / `CLUSTER_PERF_SUITE_DIR` (e.g. `/path/to/clustermax`) plus a container image via `--image` / `CONTAINER_IMAGE` (e.g. `ghcr.io/cluster_perf_suite_image`).
+- DeepGEMM smoke (`analysis/smoke_deepgemm_fp8_fp4.py`) requires importable `deep_gemm` in the selected runtime environment.

@@ -14,7 +14,7 @@ Usage:
 Options:
   --run-id <id>     RUN_ID prefix (default: YYYY-MM-DD_fp4_smoke)
   --label <label>   Label used in output filenames (default: hostname)
-  --image <image>   Container image (default: ghcr.io/jordannanos/cmax-compute:latest)
+  --image <image>   Container image (required; or set CONTAINER_IMAGE)
   --m <int>         M dimension (default: 4096)
   --n <int>         N dimension (default: 4096)
   --k <int>         K dimension (default: 4096)
@@ -26,7 +26,7 @@ EOF
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUN_ID="$(date +%Y-%m-%d)_fp4_smoke"
 LABEL="$(hostname)"
-IMAGE="${CONTAINER_IMAGE:-ghcr.io/jordannanos/cmax-compute:latest}"
+IMAGE="${CONTAINER_IMAGE:-}"
 M="4096"
 N="4096"
 K="4096"
@@ -47,6 +47,11 @@ while [[ $# -gt 0 ]]; do
     *) echo "Unknown argument: $1" >&2; usage; exit 1 ;;
   esac
 done
+
+if [[ -z "$IMAGE" ]]; then
+  echo "ERROR: --image is required (or set CONTAINER_IMAGE)." >&2
+  exit 2
+fi
 
 mkdir -p "${ROOT_DIR}/results/raw" "${ROOT_DIR}/results/structured"
 

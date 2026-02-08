@@ -94,6 +94,7 @@ dist/
 build/
 .pytest_cache/
 .ipynb_checkpoints/
+code/cluster_perf_suite/
 
 # CUDA compiled binaries
 *_sm100

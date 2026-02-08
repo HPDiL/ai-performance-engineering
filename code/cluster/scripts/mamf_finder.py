@@ -410,6 +410,12 @@ def main() -> int:
             "median_tflops_at_best": round(best_result["median_tflops"], 2) if best_result else None,
             "shapes_tested": len(all_results),
             "shapes_total": total_shapes,
+            "app_clocks": {
+                "app_sm_mhz": clocks.get("app_sm_mhz"),
+                "app_mem_mhz": clocks.get("app_mem_mhz"),
+                "cur_sm_mhz": clocks.get("cur_sm_mhz"),
+                "cur_mem_mhz": clocks.get("cur_mem_mhz"),
+            },
             "clocks": clocks,
             "warmup_iters": args.warmup_iters,
             "measurement_iters": args.iters,

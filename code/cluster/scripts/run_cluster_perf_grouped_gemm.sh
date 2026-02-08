@@ -22,7 +22,7 @@ Options:
   --preset <name>     Preset passed to grouped_gemm_bench.py (default: all).
   --warmup <n>        Warmup iterations (default: 5).
   --iters <n>         Benchmark iterations (default: 30).
-  --image <image>     Container image (default: ghcr.io/jordannanos/cmax-compute:latest).
+  --image <image>     Container image (required; or set CONTAINER_IMAGE).
 EOF
 }
 
@@ -33,7 +33,7 @@ PRESET="all"
 WARMUP="5"
 ITERS="30"
 SUITE_DIR="${CLUSTER_PERF_SUITE_DIR:-}"
-IMAGE="${CONTAINER_IMAGE:-ghcr.io/jordannanos/cmax-compute:latest}"
+IMAGE="${CONTAINER_IMAGE:-}"
 
 while [[ $# -gt 0 ]]; do
   case "${1:-}" in
@@ -51,6 +51,10 @@ done
 
 if [[ -z "$SUITE_DIR" ]]; then
   echo "ERROR: --suite-dir is required (or set CLUSTER_PERF_SUITE_DIR)." >&2
+  exit 1
+fi
+if [[ -z "$IMAGE" ]]; then
+  echo "ERROR: --image is required (or set CONTAINER_IMAGE)." >&2
   exit 1
 fi
 
