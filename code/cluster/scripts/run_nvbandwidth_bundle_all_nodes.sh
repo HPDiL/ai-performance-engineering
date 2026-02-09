@@ -148,18 +148,23 @@ for idx in "${!HOST_ARR[@]}"; do
 
   if [[ "$host" != "localhost" && "$host" != "$(hostname)" ]]; then
     mkdir -p "${ROOT_DIR}/results/structured" "${ROOT_DIR}/results/raw"
+    rm -f "${ROOT_DIR}/${out_json}" "${ROOT_DIR}/${out_sums_csv}" "${ROOT_DIR}/${out_clock_json}"
     scp "${SSH_OPTS[@]}" "${SSH_USER}@${host}:${REMOTE_ROOT}/${out_json}" "${ROOT_DIR}/results/structured/" || {
-      echo "WARNING: failed to fetch ${out_json} from ${host}" >&2
+      echo "ERROR: failed to fetch ${out_json} from ${host}" >&2
+      exit 1
     }
     scp "${SSH_OPTS[@]}" "${SSH_USER}@${host}:${REMOTE_ROOT}/${out_sums_csv}" "${ROOT_DIR}/results/structured/" || {
-      echo "WARNING: failed to fetch ${out_sums_csv} from ${host}" >&2
+      echo "ERROR: failed to fetch ${out_sums_csv} from ${host}" >&2
+      exit 1
     }
     scp "${SSH_OPTS[@]}" "${SSH_USER}@${host}:${REMOTE_ROOT}/${out_clock_json}" "${ROOT_DIR}/results/structured/" || {
-      echo "WARNING: failed to fetch ${out_clock_json} from ${host}" >&2
+      echo "ERROR: failed to fetch ${out_clock_json} from ${host}" >&2
+      exit 1
     }
     rm -rf "${ROOT_DIR}/${out_raw_dir}"
     scp -r "${SSH_OPTS[@]}" "${SSH_USER}@${host}:${REMOTE_ROOT}/${out_raw_dir}" "${ROOT_DIR}/results/raw/" || {
-      echo "WARNING: failed to fetch ${out_raw_dir} from ${host}" >&2
+      echo "ERROR: failed to fetch ${out_raw_dir} from ${host}" >&2
+      exit 1
     }
   fi
 done

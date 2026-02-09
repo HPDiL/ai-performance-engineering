@@ -40,7 +40,7 @@ Options:
 
   --gdr                      Also run GPUDirect RDMA variants (perftest --use_cuda).
   --gdr-gpu <id>             CUDA device id for perftest --use_cuda (default: 0)
-  --gdr-mem-types <csv>      Comma-separated cuda_mem_type values to test (default: 0,1)
+  --gdr-mem-types <csv>      Comma-separated cuda_mem_type values to test (default: 0)
                              (0=device, 1=managed, 4=malloc)
   --gdr-use-dmabuf           Also test perftest --use_cuda_dmabuf (default: off)
 
@@ -53,8 +53,8 @@ Options:
   --nccl-nvls-enable <0|1|2>  Export NCCL_NVLS_ENABLE to nccl-tests ranks
                             (default: unset)
                             (note: if NVLS init fails repeatedly, the suite retries after restarting IMEX;
-                             after 3 NVLS init failures it falls back to NCCL_NVLS_ENABLE=0 and records
-                             the outcome in *_nvls_recovery.json)
+                             after max retries it fails and records the root cause in
+                             *_nvls_recovery.json; no degraded fallback is used)
   --nccl-warmup <n>         nccl-tests warmup iters (default: 5)
   --nccl-iters <n>          nccl-tests measure iters (default: 20)
   --nccl-bins <list>        Comma-separated nccl-tests bins to run
@@ -105,10 +105,11 @@ IB_LAT_ITERS=20000
 
 GDR_ENABLE=0
 GDR_GPU=0
-GDR_MEM_TYPES="0,1"
+GDR_MEM_TYPES="0"
 GDR_USE_DMABUF=0
 GDR_REQUESTED=0
 GDR_DISABLE_REASON=""
+GDR_PROBE_LAST_ERROR_MSG=""
 
 NCCL_MIN_BYTES="64M"
 NCCL_MAX_AR="16G"
@@ -432,7 +433,7 @@ write_nvls_error_excerpt() {
 }
 
 append_nvls_recovery_record() {
-  local phase="$1"         # run|degraded_fallback
+  local phase="$1"         # run
   local bin_name="$2"
   local attempt="$3"
   local nvls_enable_env="$4"  # "" means unset
@@ -600,7 +601,7 @@ payload = {
     "remediation": [
         "Ensure nvidia-imex is active on all nodes and IMEX Domain State is UP (scripts/preflight_cluster_services.sh).",
         "If NVLS init fails with transport/nvls.cc + Cuda failure 801, try restarting nvidia-imex on all nodes and re-running.",
-        "If NVLS continues to fail, run with NCCL_NVLS_ENABLE=0 as a degraded escape hatch and report the perf delta.",
+        "If NVLS continues to fail after retries, treat the run as invalid and fix service state before rerun.",
     ],
 }
 
@@ -637,10 +638,10 @@ preflight() {
       fi
     done
     if [[ "$GDR_ENABLE" -eq 1 ]]; then
-      if ! command -v ib_write_lat >/dev/null 2>&1; then
-        echo "WARNING: Missing local dependency: ib_write_lat (disabling --gdr latency checks)" >&2
+      if ! command -v ib_read_lat >/dev/null 2>&1; then
+        echo "WARNING: Missing local dependency: ib_read_lat (required for --gdr latency checks)" >&2
         gdr_usable=0
-        gdr_reason_parts+=("local missing ib_write_lat")
+        gdr_reason_parts+=("local missing ib_read_lat")
       fi
     fi
     if [[ "$EXTENDED" -eq 1 ]]; then
@@ -651,25 +652,30 @@ preflight() {
         fi
       done
       if [[ "$GDR_ENABLE" -eq 1 ]]; then
-        for tool in ib_read_lat ib_send_lat; do
-          if ! command -v "$tool" >/dev/null 2>&1; then
-            echo "WARNING: Missing local dependency: ${tool} (disabling --gdr + --extended latency checks)" >&2
-            gdr_usable=0
-            gdr_reason_parts+=("local missing ${tool}")
-          fi
-        done
+        if ! command -v ib_send_lat >/dev/null 2>&1; then
+          echo "WARNING: Missing local dependency: ib_send_lat (required for --gdr + --extended latency checks)" >&2
+          gdr_usable=0
+          gdr_reason_parts+=("local missing ib_send_lat")
+        fi
       fi
     fi
     if [[ "$GDR_ENABLE" -eq 1 ]]; then
       if ! (ib_write_bw --help 2>/dev/null || true) | grep -q -- "--use_cuda"; then
-        echo "WARNING: Local ib_write_bw does not expose --use_cuda (disabling --gdr checks)" >&2
+        echo "WARNING: Local ib_write_bw does not expose --use_cuda (required for --gdr checks)" >&2
         gdr_usable=0
         gdr_reason_parts+=("local ib_write_bw lacks --use_cuda")
       fi
-      if ! (ib_write_lat --help 2>/dev/null || true) | grep -q -- "--use_cuda"; then
-        echo "WARNING: Local ib_write_lat does not expose --use_cuda (disabling --gdr checks)" >&2
+      if ! (ib_read_lat --help 2>/dev/null || true) | grep -q -- "--use_cuda"; then
+        echo "WARNING: Local ib_read_lat does not expose --use_cuda (required for --gdr checks)" >&2
         gdr_usable=0
-        gdr_reason_parts+=("local ib_write_lat lacks --use_cuda")
+        gdr_reason_parts+=("local ib_read_lat lacks --use_cuda")
+      fi
+      if [[ "$EXTENDED" -eq 1 ]]; then
+        if ! (ib_send_lat --help 2>/dev/null || true) | grep -q -- "--use_cuda"; then
+          echo "WARNING: Local ib_send_lat does not expose --use_cuda (required for --gdr + --extended checks)" >&2
+          gdr_usable=0
+          gdr_reason_parts+=("local ib_send_lat lacks --use_cuda")
+        fi
       fi
     fi
   fi
@@ -692,23 +698,18 @@ preflight() {
   if [[ "$SKIP_IB" -eq 0 ]]; then
     remote "command -v ib_write_bw >/dev/null" || return 1
     if [[ "$GDR_ENABLE" -eq 1 ]]; then
-      if ! remote "command -v ib_write_lat >/dev/null"; then
-        echo "WARNING: Missing remote dependency: ib_write_lat on ${HOST1} (disabling --gdr latency checks)" >&2
+      if ! remote "command -v ib_read_lat >/dev/null"; then
+        echo "WARNING: Missing remote dependency: ib_read_lat on ${HOST1} (required for --gdr latency checks)" >&2
         gdr_usable=0
-        gdr_reason_parts+=("remote missing ib_write_lat")
+        gdr_reason_parts+=("remote missing ib_read_lat")
       fi
     fi
     if [[ "$EXTENDED" -eq 1 ]]; then
       remote "command -v ib_read_bw >/dev/null" || return 1
       remote "command -v ib_send_bw >/dev/null" || return 1
       if [[ "$GDR_ENABLE" -eq 1 ]]; then
-        if ! remote "command -v ib_read_lat >/dev/null"; then
-          echo "WARNING: Missing remote dependency: ib_read_lat on ${HOST1} (disabling --gdr + --extended latency checks)" >&2
-          gdr_usable=0
-          gdr_reason_parts+=("remote missing ib_read_lat")
-        fi
         if ! remote "command -v ib_send_lat >/dev/null"; then
-          echo "WARNING: Missing remote dependency: ib_send_lat on ${HOST1} (disabling --gdr + --extended latency checks)" >&2
+          echo "WARNING: Missing remote dependency: ib_send_lat on ${HOST1} (required for --gdr + --extended latency checks)" >&2
           gdr_usable=0
           gdr_reason_parts+=("remote missing ib_send_lat")
         fi
@@ -716,14 +717,21 @@ preflight() {
     fi
     if [[ "$GDR_ENABLE" -eq 1 ]]; then
       if ! remote "(ib_write_bw --help 2>/dev/null || true) | grep -q -- '--use_cuda'"; then
-        echo "WARNING: Remote ib_write_bw does not expose --use_cuda on ${HOST1} (disabling --gdr checks)" >&2
+        echo "WARNING: Remote ib_write_bw does not expose --use_cuda on ${HOST1} (required for --gdr checks)" >&2
         gdr_usable=0
         gdr_reason_parts+=("remote ib_write_bw lacks --use_cuda")
       fi
-      if ! remote "(ib_write_lat --help 2>/dev/null || true) | grep -q -- '--use_cuda'"; then
-        echo "WARNING: Remote ib_write_lat does not expose --use_cuda on ${HOST1} (disabling --gdr checks)" >&2
+      if ! remote "(ib_read_lat --help 2>/dev/null || true) | grep -q -- '--use_cuda'"; then
+        echo "WARNING: Remote ib_read_lat does not expose --use_cuda on ${HOST1} (required for --gdr checks)" >&2
         gdr_usable=0
-        gdr_reason_parts+=("remote ib_write_lat lacks --use_cuda")
+        gdr_reason_parts+=("remote ib_read_lat lacks --use_cuda")
+      fi
+      if [[ "$EXTENDED" -eq 1 ]]; then
+        if ! remote "(ib_send_lat --help 2>/dev/null || true) | grep -q -- '--use_cuda'"; then
+          echo "WARNING: Remote ib_send_lat does not expose --use_cuda on ${HOST1} (required for --gdr + --extended checks)" >&2
+          gdr_usable=0
+          gdr_reason_parts+=("remote ib_send_lat lacks --use_cuda")
+        fi
       fi
     fi
   fi
@@ -737,6 +745,173 @@ preflight() {
     echo "ERROR: --gdr requested but prerequisites are not met. reason=${GDR_DISABLE_REASON}" >&2
     return 1
   fi
+
+  if [[ "$GDR_ENABLE" -eq 1 ]]; then
+    if ! validate_requested_gdr_modes; then
+      if [[ -z "$GDR_DISABLE_REASON" ]]; then
+        GDR_DISABLE_REASON="${GDR_PROBE_LAST_ERROR_MSG:-gdr mem-type validation failed}"
+      fi
+      echo "ERROR: --gdr requested but cuda mem-type probe failed. reason=${GDR_DISABLE_REASON}" >&2
+      return 1
+    fi
+  fi
+  return 0
+}
+
+gdr_probe_log_has_unsupported_memtype() {
+  local log_path="$1"
+  if [[ ! -f "$log_path" ]]; then
+    return 1
+  fi
+  grep -qiE "CUDA Memory type is not supported|unsupported with no odp MR|Parser function exited with Error" "$log_path"
+}
+
+run_gdr_mem_type_probe() {
+  local tool="$1"
+  local cuda_mem_type="$2"
+  local use_dmabuf="${3:-0}"
+  local tag="${4:-probe}"
+  local hca=""
+  local h=""
+  local -a hcas=()
+  local -a gdr_args=()
+  local -a perf_args=()
+  local base_port=19700
+  local port=""
+  local server_log=""
+  local client_log=""
+  local server_pid=0
+  local ready=0
+  local i
+  local dmabuf_desc=""
+  GDR_PROBE_LAST_ERROR_MSG=""
+  if [[ "$use_dmabuf" -eq 1 ]]; then
+    dmabuf_desc=" with dmabuf"
+  fi
+
+  case "$tool" in
+    ib_write_bw)
+      perf_args=(-q 1 -s 4096 -n 64 --report_gbits)
+      ;;
+    ib_read_lat)
+      perf_args=(-s 4 -n 200)
+      ;;
+    *)
+      GDR_PROBE_LAST_ERROR_MSG="unsupported gdr probe tool: ${tool}"
+      return 1
+      ;;
+  esac
+
+  if [[ -z "$NCCL_IB_HCA" ]]; then
+    GDR_PROBE_LAST_ERROR_MSG="no active IB HCA allowlist available for GDR probe"
+    return 1
+  fi
+  IFS=',' read -r -a hcas <<<"$NCCL_IB_HCA"
+  for h in "${hcas[@]}"; do
+    h="$(echo "$h" | xargs)"
+    if [[ -n "$h" ]]; then
+      hca="$h"
+      break
+    fi
+  done
+  if [[ -z "$hca" ]]; then
+    GDR_PROBE_LAST_ERROR_MSG="failed to select IB HCA from NCCL_IB_HCA='${NCCL_IB_HCA}'"
+    return 1
+  fi
+
+  port="$(find_free_port_remote "$base_port" 200)" || {
+    GDR_PROBE_LAST_ERROR_MSG="unable to allocate free probe port on ${HOST1} (start=${base_port})"
+    return 1
+  }
+
+  gdr_args=(--use_cuda "${GDR_GPU}" --cuda_mem_type "${cuda_mem_type}")
+  if [[ "$use_dmabuf" -eq 1 ]]; then
+    gdr_args+=(--use_cuda_dmabuf)
+  fi
+
+  server_log="${OUT_RAW_DIR}/${RUN_ID}_${LABEL}_gdr_probe_${tag}_${hca}_server.log"
+  client_log="${OUT_RAW_DIR}/${RUN_ID}_${LABEL}_gdr_probe_${tag}_${hca}_client.log"
+
+  remote "timeout 90s ${tool} -d ${hca} -i ${IB_PORT} ${perf_args[*]} ${gdr_args[*]} -p ${port}" 2>&1 | tee "$server_log" &
+  server_pid=$!
+
+  ready=0
+  for ((i=0; i<40; i++)); do
+    if remote_port_listening "$port"; then
+      ready=1
+      break
+    fi
+    if ! kill -0 "$server_pid" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.2
+  done
+  if [[ "$ready" -ne 1 ]]; then
+    GDR_PROBE_LAST_ERROR_MSG="${tool} probe server did not become ready on ${HOST1}:${port} (tag=${tag}, hca=${hca})"
+    wait "$server_pid" || true
+    if gdr_probe_log_has_unsupported_memtype "$server_log"; then
+      GDR_PROBE_LAST_ERROR_MSG="cuda_mem_type=${cuda_mem_type} unsupported for gdr probe on hca=${hca}${dmabuf_desc}"
+    fi
+    return 1
+  fi
+
+  set +e
+  "${tool}" -d "$hca" -i "$IB_PORT" "${perf_args[@]}" \
+    --bind_source_ip "${LOCAL_IP}" \
+    "${gdr_args[@]}" \
+    -p "$port" "$HOST1_IP" 2>&1 | tee "$client_log"
+  local client_rc=${PIPESTATUS[0]}
+  set -e
+  wait "$server_pid" || true
+
+  if [[ "$client_rc" -ne 0 ]]; then
+    if gdr_probe_log_has_unsupported_memtype "$server_log" || gdr_probe_log_has_unsupported_memtype "$client_log"; then
+      GDR_PROBE_LAST_ERROR_MSG="cuda_mem_type=${cuda_mem_type} unsupported for gdr probe on hca=${hca}${dmabuf_desc}"
+    else
+      GDR_PROBE_LAST_ERROR_MSG="${tool} gdr probe failed rc=${client_rc} tag=${tag} hca=${hca} port=${port}"
+    fi
+    return "$client_rc"
+  fi
+  return 0
+}
+
+validate_requested_gdr_modes() {
+  local -a mem_types=()
+  local mt=""
+  if [[ "$GDR_ENABLE" -ne 1 ]]; then
+    return 0
+  fi
+
+  IFS=',' read -r -a mem_types <<<"$GDR_MEM_TYPES"
+  if [[ "${#mem_types[@]}" -eq 0 ]]; then
+    GDR_DISABLE_REASON="--gdr enabled but --gdr-mem-types is empty"
+    return 1
+  fi
+
+  for mt in "${mem_types[@]}"; do
+    mt="$(echo "$mt" | xargs)"
+    [[ -n "$mt" ]] || continue
+    if ! run_gdr_mem_type_probe ib_write_bw "$mt" 0 "mem${mt}_write_bw"; then
+      GDR_DISABLE_REASON="${GDR_PROBE_LAST_ERROR_MSG:-gdr probe failed for cuda_mem_type=${mt} (ib_write_bw)}"
+      return 1
+    fi
+    if ! run_gdr_mem_type_probe ib_read_lat "$mt" 0 "mem${mt}_read_lat"; then
+      GDR_DISABLE_REASON="${GDR_PROBE_LAST_ERROR_MSG:-gdr probe failed for cuda_mem_type=${mt}}"
+      return 1
+    fi
+  done
+
+  if [[ "$GDR_USE_DMABUF" -eq 1 ]]; then
+    if ! run_gdr_mem_type_probe ib_write_bw "0" 1 "mem0_dmabuf_write_bw"; then
+      GDR_DISABLE_REASON="${GDR_PROBE_LAST_ERROR_MSG:-gdr probe failed for cuda_mem_type=0 with dmabuf (ib_write_bw)}"
+      return 1
+    fi
+    if ! run_gdr_mem_type_probe ib_read_lat "0" 1 "mem0_dmabuf_read_lat"; then
+      GDR_DISABLE_REASON="${GDR_PROBE_LAST_ERROR_MSG:-gdr probe failed for cuda_mem_type=0 with dmabuf (ib_read_lat)}"
+      return 1
+    fi
+  fi
+
   return 0
 }
 
@@ -993,7 +1168,6 @@ run_ib_gdr_suite() {
     return 1
   fi
 
-  local subtest_failures=0
   local mt idx mode
   idx=0
   for mt in "${mem_types[@]}"; do
@@ -1003,29 +1177,25 @@ run_ib_gdr_suite() {
     local base=$((1000 + idx * 300))
 
     if ! run_ib_bw_variant write "$base" "$tag" 1 "$mt" 0; then
-      log "WARNING: GDR subtest failed: tag=${tag} step=ib_write_bw (continuing)"
-      subtest_failures=$((subtest_failures + 1))
+      log "ERROR: GDR subtest failed: tag=${tag} step=ib_write_bw"
+      return 1
     fi
-    if ! run_ib_lat_variant write "$((base + 100))" "$tag" 1 "$mt" 0; then
-      log "WARNING: GDR subtest failed: tag=${tag} step=ib_write_lat (continuing)"
-      subtest_failures=$((subtest_failures + 1))
+    if ! run_ib_lat_variant read "$((base + 120))" "$tag" 1 "$mt" 0; then
+      log "ERROR: GDR subtest failed: tag=${tag} step=ib_read_lat"
+      return 1
     fi
     if [[ "$EXTENDED" -eq 1 ]]; then
       if ! run_ib_bw_variant read "$((base + 20))" "$tag" 1 "$mt" 0; then
-        log "WARNING: GDR subtest failed: tag=${tag} step=ib_read_bw (continuing)"
-        subtest_failures=$((subtest_failures + 1))
+        log "ERROR: GDR subtest failed: tag=${tag} step=ib_read_bw"
+        return 1
       fi
       if ! run_ib_bw_variant send "$((base + 40))" "$tag" 1 "$mt" 0; then
-        log "WARNING: GDR subtest failed: tag=${tag} step=ib_send_bw (continuing)"
-        subtest_failures=$((subtest_failures + 1))
-      fi
-      if ! run_ib_lat_variant read "$((base + 120))" "$tag" 1 "$mt" 0; then
-        log "WARNING: GDR subtest failed: tag=${tag} step=ib_read_lat (continuing)"
-        subtest_failures=$((subtest_failures + 1))
+        log "ERROR: GDR subtest failed: tag=${tag} step=ib_send_bw"
+        return 1
       fi
       if ! run_ib_lat_variant send "$((base + 140))" "$tag" 1 "$mt" 0; then
-        log "WARNING: GDR subtest failed: tag=${tag} step=ib_send_lat (continuing)"
-        subtest_failures=$((subtest_failures + 1))
+        log "ERROR: GDR subtest failed: tag=${tag} step=ib_send_lat"
+        return 1
       fi
     fi
     idx=$((idx + 1))
@@ -1034,35 +1204,27 @@ run_ib_gdr_suite() {
   if [[ "$GDR_USE_DMABUF" -eq 1 ]]; then
     local dmabuf_tag="gdr_gpu${GDR_GPU}_mem0_dmabuf"
     if ! run_ib_bw_variant write 5000 "$dmabuf_tag" 1 "0" 1; then
-      log "WARNING: GDR subtest failed: tag=${dmabuf_tag} step=ib_write_bw (continuing)"
-      subtest_failures=$((subtest_failures + 1))
+      log "ERROR: GDR subtest failed: tag=${dmabuf_tag} step=ib_write_bw"
+      return 1
     fi
-    if ! run_ib_lat_variant write 5100 "$dmabuf_tag" 1 "0" 1; then
-      log "WARNING: GDR subtest failed: tag=${dmabuf_tag} step=ib_write_lat (continuing)"
-      subtest_failures=$((subtest_failures + 1))
+    if ! run_ib_lat_variant read 5120 "$dmabuf_tag" 1 "0" 1; then
+      log "ERROR: GDR subtest failed: tag=${dmabuf_tag} step=ib_read_lat"
+      return 1
     fi
     if [[ "$EXTENDED" -eq 1 ]]; then
       if ! run_ib_bw_variant read 5020 "$dmabuf_tag" 1 "0" 1; then
-        log "WARNING: GDR subtest failed: tag=${dmabuf_tag} step=ib_read_bw (continuing)"
-        subtest_failures=$((subtest_failures + 1))
+        log "ERROR: GDR subtest failed: tag=${dmabuf_tag} step=ib_read_bw"
+        return 1
       fi
       if ! run_ib_bw_variant send 5040 "$dmabuf_tag" 1 "0" 1; then
-        log "WARNING: GDR subtest failed: tag=${dmabuf_tag} step=ib_send_bw (continuing)"
-        subtest_failures=$((subtest_failures + 1))
-      fi
-      if ! run_ib_lat_variant read 5120 "$dmabuf_tag" 1 "0" 1; then
-        log "WARNING: GDR subtest failed: tag=${dmabuf_tag} step=ib_read_lat (continuing)"
-        subtest_failures=$((subtest_failures + 1))
+        log "ERROR: GDR subtest failed: tag=${dmabuf_tag} step=ib_send_bw"
+        return 1
       fi
       if ! run_ib_lat_variant send 5140 "$dmabuf_tag" 1 "0" 1; then
-        log "WARNING: GDR subtest failed: tag=${dmabuf_tag} step=ib_send_lat (continuing)"
-        subtest_failures=$((subtest_failures + 1))
+        log "ERROR: GDR subtest failed: tag=${dmabuf_tag} step=ib_send_lat"
+        return 1
       fi
     fi
-  fi
-
-  if [[ "$subtest_failures" -gt 0 ]]; then
-    log "WARNING: GPUDirect RDMA checks completed with ${subtest_failures} failed subtests; continuing suite."
   fi
   return 0
 }
@@ -1208,89 +1370,9 @@ run_nccl_collective() {
     break
   done
 
-  # Degraded fallback: after repeated NVLS init failures, force NVLS off and rerun once.
   if [[ "$saw_nvls_init_failure" -eq 1 && "${NCCL_NVLS_ENABLE_EFFECTIVE:-}" != "0" ]]; then
-    NVLS_DEGRADED=1
-    NCCL_NVLS_ENABLE_EFFECTIVE="0"
-    log "WARNING: NVLS is being DISABLED (NCCL_NVLS_ENABLE=0) after ${NVLS_MAX_ATTEMPTS} NVLS init failures. This is a DEGRADED MODE."
-    log "WARNING: Fix path: ensure nvidia-imex is active on all nodes and IMEX Domain State is UP (scripts/preflight_cluster_services.sh)."
-
-    local attempt_tag="degraded"
-    local raw_log="${OUT_RAW_DIR}/${RUN_ID}_${LABEL}_nccl_${bin_name}_${attempt_tag}.log"
-    local cmd_log="${OUT_RAW_DIR}/${RUN_ID}_${LABEL}_nccl_${bin_name}_${attempt_tag}.cmd.txt"
-
-    local -a mpirun_cmd=(
-      mpirun
-      --hostfile "$hostfile"
-      --map-by "$MPI_MAP_BY"
-      --bind-to "$MPI_BIND_TO"
-      --mca routed direct
-    )
-    if [[ "$MPI_REPORT_BINDINGS" -eq 1 ]]; then
-      mpirun_cmd+=(--report-bindings)
-    fi
-    if [[ -n "$MPI_RANK_BY" ]]; then
-      mpirun_cmd+=(--rank-by "$MPI_RANK_BY")
-    fi
-    if [[ -n "$SSH_KEY" ]]; then
-      mpirun_cmd+=(
-        --mca plm_rsh_args
-        "-i ${SSH_KEY} -o BatchMode=yes -o IdentitiesOnly=yes -o IdentityAgent=none -o StrictHostKeyChecking=accept-new -o ConnectTimeout=8 -o ConnectionAttempts=3 -o ServerAliveInterval=5 -o ServerAliveCountMax=3"
-      )
-    fi
-    if [[ -n "$OOB_IF" ]]; then
-      mpirun_cmd+=(--mca oob_tcp_if_include "$OOB_IF" --mca btl_tcp_if_include "$OOB_IF")
-    fi
-    mpirun_cmd+=(
-      -np "$total_ranks"
-      -x "NCCL_DEBUG=${NCCL_DEBUG_LEVEL}"
-      -x "NCCL_DEBUG_SUBSYS=${NCCL_DEBUG_SUBSYS}"
-      -x "NCCL_SOCKET_IFNAME=${OOB_IF}"
-      -x "PATH=$PATH"
-      -x "LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-}"
-      -x "NCCL_NVLS_ENABLE=0"
-    )
-    if [[ -n "$CUDA_VISIBLE_DEVICES_LIST" ]]; then
-      mpirun_cmd+=(-x "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES_LIST}")
-    fi
-    if [[ -n "$NCCL_IB_HCA" ]]; then
-      mpirun_cmd+=(-x "NCCL_IB_HCA=${NCCL_IB_HCA}")
-    fi
-    mpirun_cmd+=(
-      "$mpi_py"
-      "$wrapper"
-      --
-      "$nccl_bin"
-      -b "$min_bytes"
-      -e "$max_bytes"
-      -f 2
-      -g 1
-      -w "$NCCL_WARMUP"
-      -n "$NCCL_ITERS"
-    )
-
-    printf "%q " "${mpirun_cmd[@]}" >"$cmd_log"
-    log "nccl-tests ${bin_name}: attempt=degraded ranks=${total_ranks} min=${min_bytes} max=${max_bytes} NCCL_NVLS_ENABLE(effective)=0"
-    "${mpirun_cmd[@]}" 2>&1 | tee "$raw_log"
-    local rc=${PIPESTATUS[0]}
-    if [[ "$rc" -ne 0 ]]; then
-      append_nvls_recovery_record "degraded_fallback" "$bin_name" "$((NVLS_MAX_ATTEMPTS + 1))" "0" "$rc" 0 "$raw_log" "$cmd_log"
-      log "nccl-tests ${bin_name} failed in degraded mode rc=${rc}"
-      return 1
-    fi
-
-    local cmd_string
-    cmd_string="$(cat "$cmd_log")"
-    "${ROOT_DIR}/scripts/parse_nccl_log.py" \
-      --input "$raw_log" \
-      --output "$out_json" \
-      --run-id "$RUN_ID" \
-      --hosts "$HOSTS" \
-      --gpus-per-node "$GPUS_PER_NODE" \
-      --command "$cmd_string"
-    log "Wrote ${out_json}"
-    append_nvls_recovery_record "degraded_fallback" "$bin_name" "$((NVLS_MAX_ATTEMPTS + 1))" "0" 0 0 "$raw_log" "$cmd_log" "$out_json"
-    return 0
+    log "ERROR: NVLS init failed after ${NVLS_MAX_ATTEMPTS} attempts; refusing degraded fallback."
+    log "ERROR: Fix path: ensure nvidia-imex is active on all nodes and IMEX Domain State is UP (scripts/preflight_cluster_services.sh)."
   fi
 
   return 1
@@ -1615,6 +1697,12 @@ log "CLOCK_LOCK_REQUIRED=${require_clock_lock}"
 run_step preflight preflight
 if [[ "$SKIP_RUNTIME_CVE_CHECK" -eq 0 ]]; then
   run_step runtime_cve_check run_runtime_cve_check
+fi
+if [[ "${STEP_RC[preflight]:-0}" -ne 0 ]]; then
+  log "ERROR: preflight failed; aborting remaining benchmark steps."
+  run_step summary write_summary
+  log "Done. Suite log: ${SUITE_LOG}"
+  exit 1
 fi
 
 if [[ "$SKIP_IPERF3" -eq 0 ]]; then

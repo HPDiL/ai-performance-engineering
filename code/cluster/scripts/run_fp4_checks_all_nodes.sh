@@ -42,6 +42,15 @@ Options:
   --smoke-rounds <n>     Paired smoke rounds per host for skew guard (default: 3)
   --smoke-skew-threshold-pct <pct>
                         Fail when max pairwise median smoke gap exceeds this percent (default: 5)
+  --smoke-settle-timeout-sec <sec>
+                        Max time to wait for low-util/low-temp GPU state before each smoke run (default: 240)
+  --smoke-settle-max-util-pct <pct>
+                        Required per-GPU utilization upper bound before smoke run (default: 10)
+  --smoke-settle-max-temp-c <c>
+                        Required per-GPU temperature upper bound before smoke run (default: 80)
+  --smoke-settle-consecutive <n>
+                        Consecutive successful settle polls required (default: 3)
+  --smoke-skip-settle    Skip GPU settle precheck before smoke runs
 
 Bootstrap (recommended for reproducibility; default: enabled):
   --bootstrap-nodes                Run per-node bootstrap before FP4 checks
@@ -88,6 +97,11 @@ SMOKE_WARMUP="10"
 SMOKE_ITERS="30"
 SMOKE_ROUNDS="3"
 SMOKE_SKEW_THRESHOLD_PCT="5"
+SMOKE_SETTLE_TIMEOUT_SEC="240"
+SMOKE_SETTLE_MAX_UTIL_PCT="10"
+SMOKE_SETTLE_MAX_TEMP_C="80"
+SMOKE_SETTLE_CONSECUTIVE="3"
+SMOKE_SKIP_SETTLE=0
 BOOTSTRAP_NODES=1
 BOOTSTRAP_INSTALL_SYSTEM_PACKAGES=1
 BOOTSTRAP_SYNC_CODE=1
@@ -121,6 +135,11 @@ while [[ $# -gt 0 ]]; do
     --smoke-iters) SMOKE_ITERS="${2:-}"; shift 2 ;;
     --smoke-rounds) SMOKE_ROUNDS="${2:-}"; shift 2 ;;
     --smoke-skew-threshold-pct) SMOKE_SKEW_THRESHOLD_PCT="${2:-}"; shift 2 ;;
+    --smoke-settle-timeout-sec) SMOKE_SETTLE_TIMEOUT_SEC="${2:-}"; shift 2 ;;
+    --smoke-settle-max-util-pct) SMOKE_SETTLE_MAX_UTIL_PCT="${2:-}"; shift 2 ;;
+    --smoke-settle-max-temp-c) SMOKE_SETTLE_MAX_TEMP_C="${2:-}"; shift 2 ;;
+    --smoke-settle-consecutive) SMOKE_SETTLE_CONSECUTIVE="${2:-}"; shift 2 ;;
+    --smoke-skip-settle) SMOKE_SKIP_SETTLE=1; shift ;;
     --bootstrap-nodes) BOOTSTRAP_NODES=1; shift ;;
     --skip-bootstrap-nodes) BOOTSTRAP_NODES=0; shift ;;
     --bootstrap-install-system-packages) BOOTSTRAP_INSTALL_SYSTEM_PACKAGES=1; shift ;;
@@ -143,6 +162,22 @@ if ! [[ "$SMOKE_ROUNDS" =~ ^[0-9]+$ ]] || [[ "$SMOKE_ROUNDS" -lt 1 ]]; then
 fi
 if ! [[ "$SMOKE_SKEW_THRESHOLD_PCT" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
   echo "ERROR: --smoke-skew-threshold-pct must be a non-negative number (got: ${SMOKE_SKEW_THRESHOLD_PCT})" >&2
+  exit 2
+fi
+if ! [[ "$SMOKE_SETTLE_TIMEOUT_SEC" =~ ^[1-9][0-9]*$ ]]; then
+  echo "ERROR: --smoke-settle-timeout-sec must be an integer >= 1 (got: ${SMOKE_SETTLE_TIMEOUT_SEC})" >&2
+  exit 2
+fi
+if ! [[ "$SMOKE_SETTLE_MAX_UTIL_PCT" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+  echo "ERROR: --smoke-settle-max-util-pct must be a non-negative number (got: ${SMOKE_SETTLE_MAX_UTIL_PCT})" >&2
+  exit 2
+fi
+if ! [[ "$SMOKE_SETTLE_MAX_TEMP_C" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+  echo "ERROR: --smoke-settle-max-temp-c must be a non-negative number (got: ${SMOKE_SETTLE_MAX_TEMP_C})" >&2
+  exit 2
+fi
+if ! [[ "$SMOKE_SETTLE_CONSECUTIVE" =~ ^[1-9][0-9]*$ ]]; then
+  echo "ERROR: --smoke-settle-consecutive must be an integer >= 1 (got: ${SMOKE_SETTLE_CONSECUTIVE})" >&2
   exit 2
 fi
 
@@ -248,6 +283,32 @@ run_host_cmd() {
   else
     run_remote "$host" "bash -lc $(printf '%q' "$cmd")"
   fi
+}
+
+wait_for_smoke_settle() {
+  local host="$1"
+  local label="$2"
+  local deadline=$((SECONDS + SMOKE_SETTLE_TIMEOUT_SEC))
+  local ok_streak=0
+  local sample_cmd=""
+
+  sample_cmd="nvidia-smi --query-gpu=index,utilization.gpu,temperature.gpu --format=csv,noheader,nounits | awk -F',' -v max_u='${SMOKE_SETTLE_MAX_UTIL_PCT}' -v max_t='${SMOKE_SETTLE_MAX_TEMP_C}' 'BEGIN{ok=1} {u=\$2+0; t=\$3+0; if (u>max_u || t>max_t) ok=0} END {if (NR==0 || !ok) exit 1; exit 0}'"
+
+  while (( SECONDS < deadline )); do
+    if run_host_cmd "$host" "$sample_cmd" >/dev/null 2>&1; then
+      ok_streak=$((ok_streak + 1))
+      if (( ok_streak >= SMOKE_SETTLE_CONSECUTIVE )); then
+        return 0
+      fi
+    else
+      ok_streak=0
+    fi
+    sleep 2
+  done
+
+  echo "ERROR: smoke settle precheck timed out on host=${host} label=${label}." >&2
+  run_host_cmd "$host" "nvidia-smi --query-gpu=index,utilization.gpu,temperature.gpu,clocks.current.sm,clocks.applications.sm --format=csv,noheader,nounits" >&2 || true
+  return 1
 }
 
 trim_ws() {
@@ -771,6 +832,7 @@ if [[ -n "$LABELS" ]]; then
 fi
 
 echo "FP4 smoke guard config: rounds=${SMOKE_ROUNDS} max_pairwise_median_gap_pct=${SMOKE_SKEW_THRESHOLD_PCT}"
+echo "FP4 smoke settle config: skip=${SMOKE_SKIP_SETTLE} timeout_sec=${SMOKE_SETTLE_TIMEOUT_SEC} max_util_pct=${SMOKE_SETTLE_MAX_UTIL_PCT} max_temp_c=${SMOKE_SETTLE_MAX_TEMP_C} consecutive=${SMOKE_SETTLE_CONSECUTIVE}"
 echo "FP4 attestation mode: ${ATTESTATION_MODE} (${ATTESTATION_PROFILE})"
 
 declare -a ATTESTATION_LABELS=()
@@ -985,6 +1047,10 @@ if [[ "$SKIP_SMOKE" -eq 0 ]]; then
       fi
       if [[ -z "$label" ]]; then
         label="$(sanitize_label "$host")"
+      fi
+
+      if [[ "$SMOKE_SKIP_SETTLE" -eq 0 ]]; then
+        wait_for_smoke_settle "$host" "$label"
       fi
 
       round_run_id="${RUN_ID}_r${round}"

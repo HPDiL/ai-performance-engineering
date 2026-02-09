@@ -113,7 +113,7 @@ Options:
                            off|collectives|base|extended (default: collectives)
   --health-gdr             Enable GPUDirect RDMA checks inside health suite (default: off)
   --health-gdr-gpu <id>    CUDA device id for health-suite GDR checks (default: 0)
-  --health-gdr-mem-types <csv>  CUDA mem types for GDR checks (default: 0,1)
+  --health-gdr-mem-types <csv>  CUDA mem types for GDR checks (default: 0)
   --health-gdr-use-dmabuf  Also run health-suite GDR checks with --use_cuda_dmabuf
 
   --enable-mamf            Run MAMF compute-depth scan (default: off)
@@ -257,7 +257,7 @@ NVBANDWIDTH_QUICK=0
 HEALTH_SUITE_MODE="collectives"
 HEALTH_GDR=0
 HEALTH_GDR_GPU="0"
-HEALTH_GDR_MEM_TYPES="0,1"
+HEALTH_GDR_MEM_TYPES="0"
 HEALTH_GDR_USE_DMABUF=0
 CHECK_IB_SHARP=0
 IB_SHARP_ATTEMPT_START_SHARP_AM=0
@@ -750,6 +750,26 @@ validate_required_artifacts() {
           missing=1
         fi
       done
+      path="${ROOT_DIR}/results/structured/${RUN_ID}_${label}_nvbandwidth.json"
+      if [[ -f "$path" ]]; then
+        if ! python3 - "$path" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+status = payload.get("status")
+if status != "ok":
+    raise SystemExit(f"nvbandwidth status is not ok: {status}")
+clock = payload.get("clock_lock") or {}
+if not bool(clock.get("all_devices_locked")):
+    raise SystemExit("nvbandwidth clock_lock.all_devices_locked is false")
+PY
+        then
+          echo "ERROR: invalid nvbandwidth summary: ${path}" >&2
+          missing=1
+        fi
+      fi
     done
   fi
 
@@ -776,6 +796,37 @@ validate_required_artifacts() {
         missing=1
       fi
     done
+
+    path="${ROOT_DIR}/results/structured/${RUN_ID}_${leader_label}_vllm_multinode_serve.json"
+    if [[ -f "$path" ]]; then
+      if ! python3 - "$path" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+status = payload.get("status")
+if status != "ok":
+    raise SystemExit(f"multinode vLLM status is not ok: {status}")
+rcs = payload.get("return_codes") or {}
+if int(rcs.get("leader", 1)) != 0 or int(rcs.get("worker", 1)) != 0:
+    raise SystemExit(f"multinode vLLM return codes not clean: {rcs}")
+clock = payload.get("clock_lock") or {}
+leader = clock.get("leader") or {}
+worker = clock.get("worker") or {}
+if not bool(leader.get("all_devices_locked")):
+    raise SystemExit("multinode vLLM leader clocks are not locked")
+if not bool(worker.get("all_devices_locked")):
+    raise SystemExit("multinode vLLM worker clocks are not locked")
+metrics = payload.get("metrics") or {}
+if (metrics.get("total_token_throughput") or 0) <= 0:
+    raise SystemExit("multinode vLLM total_token_throughput is not positive")
+PY
+      then
+        echo "ERROR: invalid multinode vLLM summary: ${path}" >&2
+        missing=1
+      fi
+    fi
   fi
 
   if [[ "${#HOST_ARR[@]}" -gt 1 && "$HEALTH_SUITE_MODE" != "off" && "$HEALTH_GDR" -eq 1 ]]; then
@@ -787,12 +838,14 @@ validate_required_artifacts() {
       echo "ERROR: health suite summary missing; cannot verify effective GDR." >&2
       missing=1
     else
-      if ! python3 - "${hs_summaries[0]}" <<'PY'
+      if ! python3 - "${hs_summaries[0]}" "${HEALTH_GDR_MEM_TYPES}" "${HEALTH_GDR_USE_DMABUF}" <<'PY'
 import json
 import sys
 from pathlib import Path
 
 summary_path = Path(sys.argv[1])
+expected_mem_types = [x.strip() for x in sys.argv[2].split(",") if x.strip()]
+expect_dmabuf = bool(int(sys.argv[3]))
 summary = json.loads(summary_path.read_text(encoding="utf-8"))
 gdr = summary.get("gdr") or {}
 if not bool(gdr.get("requested")):
@@ -800,6 +853,13 @@ if not bool(gdr.get("requested")):
 if not bool(gdr.get("effective_enabled")):
     reason = gdr.get("disabled_reason")
     raise SystemExit(f"GDR effective_enabled is false in {summary_path}; reason={reason}")
+actual_mem_types = [str(x).strip() for x in (gdr.get("mem_types") or []) if str(x).strip()]
+if sorted(actual_mem_types) != sorted(expected_mem_types):
+    raise SystemExit(
+        f"GDR mem_types mismatch in {summary_path}: expected={expected_mem_types} actual={actual_mem_types}"
+    )
+if expect_dmabuf and not bool(gdr.get("use_dmabuf")):
+    raise SystemExit(f"GDR use_dmabuf expected true but false in {summary_path}")
 PY
       then
         echo "ERROR: health suite GDR verification failed for ${hs_summaries[0]}" >&2

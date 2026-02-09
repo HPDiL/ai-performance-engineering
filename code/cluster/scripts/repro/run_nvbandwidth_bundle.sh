@@ -97,14 +97,6 @@ echo "SUMS_CSV=${SUMS_CSV}"
 echo "LOCK_META=${LOCK_META}"
 echo ""
 
-contains_ptx_toolchain_mismatch() {
-  local log_path="$1"
-  if [[ ! -f "$log_path" ]]; then
-    return 1
-  fi
-  grep -qiE "cudaErrorUnsupportedPtxVersion|unsupported toolchain" "$log_path"
-}
-
 run_host_nvbandwidth() {
   RUN_ID="$RUN_ID" LABEL="$LABEL" \
     "${ROOT_DIR}/scripts/run_with_gpu_clocks.sh" \
@@ -152,20 +144,6 @@ if [[ "$REQUESTED_RUNTIME" == "host" ]]; then
   run_host_nvbandwidth
   run_rc=$?
   set -e
-
-  if [[ "$run_rc" -ne 0 ]] && contains_ptx_toolchain_mismatch "$RAW_LOG"; then
-    if ! command -v docker >/dev/null 2>&1; then
-      echo "ERROR: nvbandwidth host run failed with unsupported PTX toolchain and docker is unavailable for fallback." >&2
-      exit "$run_rc"
-    fi
-    echo "Host nvbandwidth failed with unsupported PTX/toolchain. Retrying in container runtime." | tee -a "$RAW_LOG"
-    FALLBACK_USED=1
-    EFFECTIVE_RUNTIME="container_fallback"
-    set +e
-    run_container_nvbandwidth
-    run_rc=$?
-    set -e
-  fi
 else
   if ! command -v docker >/dev/null 2>&1; then
     echo "ERROR: docker not found; required for runtime=container." >&2

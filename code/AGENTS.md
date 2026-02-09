@@ -17,6 +17,27 @@
 - Discovery/inventory may use `nvidia-smi` and related commands. Benchmarks/profiling must still lock clocks via the harness (`lock_gpu_clocks`); do not manually lock clocks via `nvidia-smi`.
 - Cluster eval scripts MUST fail unless clock locking succeeds. Do not add bypass flags; any run without locked clocks is invalid and should not be produced by the harness.
 
+### Root-Cause First (CRITICAL)
+- Do not rely on fallback behavior when a benchmark/probe path fails. Identify the underlying root cause and fix it.
+- If a mode/feature is unsupported on the current cluster (for example a specific GDR mem type), fail fast with a clear diagnostic and required remediation; do not silently continue.
+- Remove warning-only continuation paths for required checks in canonical runs. Canonical suites must be green without remediation context.
+- Treat "retry in another runtime/tool" as a temporary debugging step only; do not keep it as the default collection path.
+- For GPUDirect RDMA specifically: probe requested `--gdr-mem-types` up front and fail preflight if unsupported (for example `cuda_mem_type=1` with no ODP MR / dmabuf support). Do not downgrade requested coverage mid-run.
+- Validate required artifacts by semantic status (`status=ok`, lock metadata, non-empty metrics), not only by file existence.
+- Do not manually inject signals/interruptions into benchmark or serving processes during canonical runs; treat any such run as invalid and rerun fresh.
+
+### Canonical Run Hygiene (CRITICAL)
+- After producing a new canonical run, clean up superseded intermediate run artifacts so reports only point to the canonical package.
+- Preserve the canonical run and any explicitly requested historical baselines; remove only superseded intermediates.
+- Keep `results/structured/`, `results/raw/`, and `docs/figures/` tidy enough that stale artifacts cannot be mistaken for canonical evidence.
+- When cleanup is requested, remove superseded run artifacts in the same change as report synchronization so stale paths cannot remain referenced.
+
+### Report Completeness + Sync (CRITICAL)
+- Before finalizing `field-report.md`, diff against prior report revisions and restore any dropped sections/visuals/evidence links that are still relevant.
+- `field-report.md` and `field-report-notes.md` must always be synchronized to the same canonical run id, metrics, issues, and artifact links.
+- If report numbers diverge from current canonical artifacts, treat that as a blocker and fix the report (or rerun collection) before sign-off.
+- Explicitly include required issue ledgers (missing artifacts, GDR requested vs effective, latency knees) and verify each claim against canonical structured artifacts.
+
 ### Engagement Scope (CRITICAL)
 - Explicitly declare the evaluation scope: which hosts/nodes are in-scope, GPU count per host, and any excluded nodes. Never use excluded nodes for discovery or benchmarks.
 - Preserve SSH trust by default: do not rotate SSH host keys or machine-ids unless explicitly requested and logged, with pre/post identity snapshots.
