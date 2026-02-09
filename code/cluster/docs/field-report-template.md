@@ -70,7 +70,7 @@ Discovery:
 - Repro commands:
   - `scripts/repro/run_vllm_serve_sweep_container.sh ...`
   - `python3 analysis/plot_vllm_serve_sweep.py ...`
-  - Optional multinode path: `scripts/repro/run_vllm_serve_multinode_container.sh ...`
+  - Optional multinode path: `scripts/repro/run_vllm_serve_multinode_container.sh ...` (auto-pins one image digest across leader/worker)
 - Artifacts:
   - `results/structured/<RUN_ID>_<label>_vllm_serve_sweep.csv`
   - `results/structured/<RUN_ID>_<label>_vllm_serve_sweep.jsonl`
@@ -84,6 +84,19 @@ Discovery:
     - `results/structured/<RUN_ID>_<leader_label>_vllm_multinode_serve.jsonl`
     - `results/structured/<RUN_ID>_<leader_label>_vllm_multinode_leader_clock_lock.json`
     - `results/structured/<RUN_ID>_<worker_label>_vllm_multinode_worker_clock_lock.json`
+    - `docs/figures/<RUN_ID>_<leader_label>_multinode_vllm_serve_total_tok_s_vs_concurrency.png`
+    - `docs/figures/<RUN_ID>_<leader_label>_multinode_vllm_serve_ttft_vs_concurrency.png`
+
+## Supporting: nvbandwidth Bundle (Optional, Recommended For GB200)
+- Why: add direct host-device and GPU-GPU throughput visibility with strict lock evidence.
+- Repro:
+  - `scripts/repro/run_nvbandwidth_bundle.sh --run-id <RUN_ID> --label <label> --suite-dir <suite_root> --image ghcr.io/jordannanos/cmax-compute:latest --quick`
+  - `python3 analysis/plot_nvbandwidth_sums.py --input results/structured/<RUN_ID>_<label>_nvbandwidth_sums.csv --out docs/figures/<RUN_ID>_<label>_nvbandwidth_sums.png`
+- Artifacts:
+  - `results/structured/<RUN_ID>_<label>_nvbandwidth.json`
+  - `results/structured/<RUN_ID>_<label>_nvbandwidth_sums.csv`
+  - `results/structured/<RUN_ID>_<label>_nvbandwidth_clock_lock.json`
+  - `docs/figures/<RUN_ID>_<label>_nvbandwidth_sums.png`
 
 ## Supporting: Compute Sanity (BF16 GEMM)
 - Why: catch per-node/per-GPU deltas fast

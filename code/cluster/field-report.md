@@ -7,8 +7,9 @@ Last updated: 2026-02-09.
 - Baseline run for stakeholder conclusions: `2026-02-09_gb200_fullflags_all_0117`.
 - Latest clean 2-node run is healthy and reproducible: NCCL all-reduce peak bus bandwidth `840.07 GB/s` (16 GiB), NVLS not degraded.
 - vLLM serving shows a clear latency knee: output throughput rises to `26.88k tok/s` at concurrency `512`, but mean TTFT grows to `~5479 ms`.
-- Multi-node vLLM serving path is now first-class in the harness with strict lock evidence on both nodes; latest run failed before readiness with `ModuleNotFoundError: vllm.config.kernel`.
+- Multi-node vLLM serving path is now passing with strict lock evidence on both nodes; latest run reports `8.24 req/s`, `2110.43 tok/s`, and `p99 TTFT 938.02 ms`.
 - NVLink/NVSwitch topology artifacts are now bundled for both nodes and show full intra-node `NV18` mesh connectivity.
+- Dedicated `nvbandwidth` bundle is now included with strict lock metadata; node1 peak bidirectional D2D SUM is `18500.33 GB/s`.
 - OOB TCP is only `~7.72/7.53 Gbps` (fwd/rev), so treat it as control/bootstrap, not data plane.
 - One-off GPU degradations and GEMM-collapses were transient: Either required reset or self-cleared under immediate locked rerun.
 - Intentionally hard-requiring DCGM during preflight and before/after state is recorded per host.
@@ -19,8 +20,9 @@ Last updated: 2026-02-09.
 - Scope + baseline package: [results/structured/2026-02-09_gb200_fullflags_all_0117_manifest.json](results/structured/2026-02-09_gb200_fullflags_all_0117_manifest.json), [latest_cluster_meta][latest_cluster_meta]
 - NCCL health + NVLS behavior: [results/structured/2026-02-09_gb200_fullflags_all_0117_health_suite_extended_node1node2_cluster_health_suite_summary.json](results/structured/2026-02-09_gb200_fullflags_all_0117_health_suite_extended_node1node2_cluster_health_suite_summary.json), [docs/figures/2026-02-09_gb200_fullflags_all_0117_2nodes_nccl_bw_vs_msg.png](docs/figures/2026-02-09_gb200_fullflags_all_0117_2nodes_nccl_bw_vs_msg.png), [docs/figures/2026-02-09_gb200_fullflags_all_0117_nccl_algo_comparison.png](docs/figures/2026-02-09_gb200_fullflags_all_0117_nccl_algo_comparison.png)
 - Inference latency knee: [results/structured/2026-02-09_gb200_fullflags_all_0117_node1_vllm_serve_sweep.csv](results/structured/2026-02-09_gb200_fullflags_all_0117_node1_vllm_serve_sweep.csv), [tok_s_vs_conc][tok_s_vs_conc], [ttft_vs_conc][ttft_vs_conc]
-- Multinode vLLM path status: [results/structured/2026-02-09_gb200_fullflags_all_0117_node1_vllm_multinode_serve.json](results/structured/2026-02-09_gb200_fullflags_all_0117_node1_vllm_multinode_serve.json), [results/structured/2026-02-09_gb200_fullflags_all_0117_node1_vllm_multinode_serve.csv](results/structured/2026-02-09_gb200_fullflags_all_0117_node1_vllm_multinode_serve.csv)
+- Multinode vLLM path status: [results/structured/2026-02-09_gb200_fullflags_all_0117_node1_vllm_multinode_serve.json](results/structured/2026-02-09_gb200_fullflags_all_0117_node1_vllm_multinode_serve.json), [docs/figures/2026-02-09_gb200_fullflags_all_0117_node1_multinode_vllm_serve_total_tok_s_vs_concurrency.png](docs/figures/2026-02-09_gb200_fullflags_all_0117_node1_multinode_vllm_serve_total_tok_s_vs_concurrency.png), [docs/figures/2026-02-09_gb200_fullflags_all_0117_node1_multinode_vllm_serve_ttft_vs_concurrency.png](docs/figures/2026-02-09_gb200_fullflags_all_0117_node1_multinode_vllm_serve_ttft_vs_concurrency.png)
 - NVLink/NVSwitch topology artifacts: [node1_nvlink_topology_json][node1_nvlink_topology_json], [node2_nvlink_topology_json][node2_nvlink_topology_json], [node1_nvlink_topology_png][node1_nvlink_topology_png], [node2_nvlink_topology_png][node2_nvlink_topology_png]
+- nvbandwidth bundle artifacts: [results/structured/2026-02-09_gb200_fullflags_all_0117_node1_nvbandwidth.json](results/structured/2026-02-09_gb200_fullflags_all_0117_node1_nvbandwidth.json), [results/structured/2026-02-09_gb200_fullflags_all_0117_node1_nvbandwidth_sums.csv](results/structured/2026-02-09_gb200_fullflags_all_0117_node1_nvbandwidth_sums.csv), [docs/figures/2026-02-09_gb200_fullflags_all_0117_node1_nvbandwidth_sums.png](docs/figures/2026-02-09_gb200_fullflags_all_0117_node1_nvbandwidth_sums.png)
 - OOB vs IB gap: [results/structured/2026-02-09_gb200_fullflags_all_0117_iperf3_oob_tcp.json](results/structured/2026-02-09_gb200_fullflags_all_0117_iperf3_oob_tcp.json), [docs/figures/2026-02-09_gb200_fullflags_all_0117_iperf3_oob_tcp.png](docs/figures/2026-02-09_gb200_fullflags_all_0117_iperf3_oob_tcp.png), [docs/figures/2026-02-09_gb200_fullflags_all_0117_2nodes_nccl_bw_vs_msg.png](docs/figures/2026-02-09_gb200_fullflags_all_0117_2nodes_nccl_bw_vs_msg.png)
 - Transient anomaly evidence (kept as incident context): [results/structured/2026-02-08_ssh_key_full_suite_r2_node2_gemm_gpu_sanity.csv](results/structured/2026-02-08_ssh_key_full_suite_r2_node2_gemm_gpu_sanity.csv), [results/structured/2026-02-08_node2_gpu2_diag_pre_reset_node2_gemm_gpu_sanity.csv](results/structured/2026-02-08_node2_gpu2_diag_pre_reset_node2_gemm_gpu_sanity.csv), [docs/figures/2026-02-08_node2_gpu2_transient_gemm_tflops.png](docs/figures/2026-02-08_node2_gpu2_transient_gemm_tflops.png)
 - Preflight/DCGM policy evidence: [results/structured/2026-02-09_gb200_fullflags_all_0117_preflight_services.json](results/structured/2026-02-09_gb200_fullflags_all_0117_preflight_services.json), [results/structured/2026-02-08_test_preflight_dcgm_before_after_node1node2_preflight_services.json](results/structured/2026-02-08_test_preflight_dcgm_before_after_node1node2_preflight_services.json), [operator_state_snapshot][operator_state_snapshot]
@@ -44,7 +46,7 @@ Last updated: 2026-02-09.
 | NCCL multi-node | all-reduce peak `840.07 GB/s` with stable curve shape | historical low-band regime `~529.64 GB/s` | [latest_health][latest_health], [results/structured/2026-02-07_224500_nccl_16g_baseline_ppr4_bindnone_node1node2_cluster_health_suite_summary.json](results/structured/2026-02-07_224500_nccl_16g_baseline_ppr4_bindnone_node1node2_cluster_health_suite_summary.json), [docs/figures/2026-02-07_nccl_allreduce_bimodal_overlay.png](docs/figures/2026-02-07_nccl_allreduce_bimodal_overlay.png) |
 | Service state | preflight enforces `persistenced`/`imex`/`dcgm` healthy before run | missing service readiness broke NVLS init and vLLM startup | [preflight_latest][preflight_latest], [results/structured/2026-02-08_025442_cloud_eval_full_health_suite_extended_node1node2_nccl_all_reduce_perf.error_excerpt.txt](results/structured/2026-02-08_025442_cloud_eval_full_health_suite_extended_node1node2_nccl_all_reduce_perf.error_excerpt.txt), [results/structured/2026-02-08_025442_cloud_eval_full_node1_vllm_serve_sweep_sweep_log.txt](results/structured/2026-02-08_025442_cloud_eval_full_node1_vllm_serve_sweep_sweep_log.txt) |
 | Inference serving | predictable throughput rise through `c=256` | strong TTFT knee at `c=512` (`~5479 ms`) | [results/structured/2026-02-09_gb200_fullflags_all_0117_node1_vllm_serve_sweep.csv](results/structured/2026-02-09_gb200_fullflags_all_0117_node1_vllm_serve_sweep.csv), [tok_s_vs_conc][tok_s_vs_conc], [ttft_vs_conc][ttft_vs_conc] |
-| Inference serving (multi-node path) | new harness path executes with strict lock metadata on both hosts | current attempt fails during Ray worker import (`No module named 'vllm.config.kernel'`) before server readiness | [results/structured/2026-02-09_gb200_fullflags_all_0117_node1_vllm_multinode_serve.json](results/structured/2026-02-09_gb200_fullflags_all_0117_node1_vllm_multinode_serve.json), [results/structured/2026-02-09_gb200_fullflags_all_0117_node1_vllm_multinode_serve.csv](results/structured/2026-02-09_gb200_fullflags_all_0117_node1_vllm_multinode_serve.csv) |
+| Inference serving (multi-node path) | harness path now executes with strict lock metadata on both hosts and digest-pinned image parity | first attempt failed on image mismatch, but latest run is healthy (`status=ok`) with TP=8 across `node1,node2` | [results/structured/2026-02-09_gb200_fullflags_all_0117_node1_vllm_multinode_serve.json](results/structured/2026-02-09_gb200_fullflags_all_0117_node1_vllm_multinode_serve.json), [docs/figures/2026-02-09_gb200_fullflags_all_0117_node1_multinode_vllm_serve_total_tok_s_vs_concurrency.png](docs/figures/2026-02-09_gb200_fullflags_all_0117_node1_multinode_vllm_serve_total_tok_s_vs_concurrency.png) |
 | GEMM per-GPU | `node2_gpu2` in-family (`~1530.80 TFLOPS`) in clean baseline | one-off collapse (`~709 TFLOPS`) that recovered on immediate rerun (`~1548.7 TFLOPS`) | [results/structured/2026-02-09_gb200_fullflags_all_0117_node2_gemm_gpu_sanity.csv](results/structured/2026-02-09_gb200_fullflags_all_0117_node2_gemm_gpu_sanity.csv), [results/structured/2026-02-08_ssh_key_full_suite_r2_node2_gemm_gpu_sanity.csv](results/structured/2026-02-08_ssh_key_full_suite_r2_node2_gemm_gpu_sanity.csv), [results/structured/2026-02-08_node2_gpu2_diag_pre_reset_node2_gemm_gpu_sanity.csv](results/structured/2026-02-08_node2_gpu2_diag_pre_reset_node2_gemm_gpu_sanity.csv), [docs/figures/2026-02-08_node2_gpu2_transient_gemm_tflops.png](docs/figures/2026-02-08_node2_gpu2_transient_gemm_tflops.png) |
 
 ## Benchmark A (Networking Story)
@@ -69,8 +71,10 @@ Last updated: 2026-02-09.
   - TPOT vs concurrency: [docs/figures/2026-02-09_gb200_fullflags_all_0117_node1_vllm_serve_tpot_vs_concurrency.png](docs/figures/2026-02-09_gb200_fullflags_all_0117_node1_vllm_serve_tpot_vs_concurrency.png)
 - Multi-node serving path status (new harness path, TP=8 across `node1,node2`):
   - Run attempt: `2026-02-09_gb200_fullflags_all_0117` with `isl=512`, `osl=256`, `concurrency=16`, `num_prompts=64`.
-  - Outcome: failed before readiness due Ray-worker import error `No module named 'vllm.config.kernel'` (`failure_reason` in structured summary).
+  - Outcome: passing (`status=ok`) after enforcing one image digest across both nodes.
+  - Key metrics: request throughput `8.24 req/s`, output throughput `2110.43 tok/s`, total throughput `6331.29 tok/s`, p99 TTFT `938.02 ms`.
   - Structured outputs: [results/structured/2026-02-09_gb200_fullflags_all_0117_node1_vllm_multinode_serve.json](results/structured/2026-02-09_gb200_fullflags_all_0117_node1_vllm_multinode_serve.json), [results/structured/2026-02-09_gb200_fullflags_all_0117_node1_vllm_multinode_serve.csv](results/structured/2026-02-09_gb200_fullflags_all_0117_node1_vllm_multinode_serve.csv)
+  - Charts: [docs/figures/2026-02-09_gb200_fullflags_all_0117_node1_multinode_vllm_serve_total_tok_s_vs_concurrency.png](docs/figures/2026-02-09_gb200_fullflags_all_0117_node1_multinode_vllm_serve_total_tok_s_vs_concurrency.png), [docs/figures/2026-02-09_gb200_fullflags_all_0117_node1_multinode_vllm_serve_ttft_vs_concurrency.png](docs/figures/2026-02-09_gb200_fullflags_all_0117_node1_multinode_vllm_serve_ttft_vs_concurrency.png)
 
 ## Node Parity Snapshot (node1 vs node2)
 - Structured summary: [node_parity_summary][node_parity_summary]
@@ -92,6 +96,17 @@ Last updated: 2026-02-09.
   - [node1_nvlink_topology_png][node1_nvlink_topology_png]
   - [node2_nvlink_topology_png][node2_nvlink_topology_png]
 - Both nodes show a full 4-GPU `NV18` mesh (`6/6` GPU pairs on each node), which is consistent with the high intra-node collective behavior seen in Benchmark A.
+
+## Dedicated nvbandwidth Snapshot
+- Dedicated strict-lock `nvbandwidth` bundle now ships with this run package:
+  - [results/structured/2026-02-09_gb200_fullflags_all_0117_node1_nvbandwidth.json](results/structured/2026-02-09_gb200_fullflags_all_0117_node1_nvbandwidth.json)
+  - [results/structured/2026-02-09_gb200_fullflags_all_0117_node1_nvbandwidth_sums.csv](results/structured/2026-02-09_gb200_fullflags_all_0117_node1_nvbandwidth_sums.csv)
+  - [docs/figures/2026-02-09_gb200_fullflags_all_0117_node1_nvbandwidth_sums.png](docs/figures/2026-02-09_gb200_fullflags_all_0117_node1_nvbandwidth_sums.png)
+- Key results (node1, quick mode):
+  - H2D SUM: `844.77 GB/s`
+  - D2H SUM: `773.39 GB/s`
+  - D2D bidirectional write total SUM: `18500.33 GB/s`
+  - D2D bidirectional read total SUM: `17925.73 GB/s`
 
 ## GB200-Focused Extensions (Enabled in this run)
 - All-reduce stability (`2 GiB`, 200 iters): mean busbw `809.65 GB/s`, CV `1.687%`, jitter assessment `good`.
@@ -258,11 +273,11 @@ Patchset handling model (non-public source):
 
 | Patch area | Capability demonstrated | Operator impact |
 | --- | --- | --- |
-| `scripts/repro/run_vllm_serve_multinode_container.sh` + `scripts/repro/vllm_multinode_inner.sh` | First-class 2-node vLLM serving execution path with strict per-node clock-lock evidence and structured failure capture | Converts ad-hoc multinode serving attempts into reproducible artifacts (success or failure) suitable for field reports and operator handoff. |
+| `scripts/repro/run_vllm_serve_multinode_container.sh` + `scripts/repro/vllm_multinode_inner.sh` | First-class 2-node vLLM serving execution path with strict per-node clock-lock evidence, automatic cross-node image digest pinning, and structured outputs | Converts ad-hoc multinode serving attempts into reproducible artifacts with deterministic runtime parity across nodes for field reports and operator handoff. |
 | `analysis/plot_nvlink_topology.py` + suite integration in `scripts/run_cluster_eval_suite.sh` | Topology artifact productization from discovery metadata (`nvidia-smi topo -m`) | Adds explicit NVLink/NVSwitch evidence to stakeholder packages without requiring a separate manual extraction workflow. |
 | `.gitignore` | Output hygiene and reproducibility policy enforcement (generated vLLM result artifacts ignored by default) | Keeps review/commit surface focused on code and documented artifacts, not transient run outputs. |
 | `standalone/compute/run-all-benchmarks.sh` | Container/runtime robustness debugging (GPU access check path hardening) | Reduces first-run failures from image/tag assumptions and improves setup reliability. |
-| `standalone/compute/nvbandwidth/run-nvbandwidth.sh` | Build-chain hardening for benchmark dependencies | Improves portability across base images; fewer failed compute diagnostics. |
+| `scripts/repro/run_nvbandwidth_bundle.sh` + `analysis/plot_nvbandwidth_sums.py` | Dedicated strict-lock nvbandwidth artifact path with structured SUM extraction and stakeholder-ready figure output | Adds explicit host-device and GPU-GPU bandwidth evidence to the report package with reproducible JSON/CSV/PNG outputs. |
 | `standalone/compute/p2p-bandwidth/p2p-bandwidth.py` | Measurement-correctness validation (timing path reliability) | Avoids misleading bandwidth claims from unstable timing methodology. |
 | `standalone/compute/gemm-bench/grouped_gemm_bench.py` + `code/cluster_perf_patches/deepgemm_gb200_grouped_gemm_ue8m0.patch` | Architecture-specific compatibility triage on GB200 | Restores reproducible FP4 grouped-GEMM behavior where legacy scaling-factor errors appeared. |
 | `standalone/storage/fio/run-fio-bench.sh` | Failure-mode fallback design (native path when container pull fails) | Maintains storage benchmark continuity under registry/auth constraints. |
@@ -287,8 +302,11 @@ Evidence that these improvements are usable in practice is captured by the exten
 - `results/structured/2026-02-09_gb200_fullflags_all_0117_node1_vllm_multinode_serve.csv`
 - `results/structured/2026-02-09_gb200_fullflags_all_0117_node1_nvlink_topology.json`
 - `results/structured/2026-02-09_gb200_fullflags_all_0117_node2_nvlink_topology.json`
+- `results/structured/2026-02-09_gb200_fullflags_all_0117_node1_nvbandwidth.json`
+- `results/structured/2026-02-09_gb200_fullflags_all_0117_node1_nvbandwidth_sums.csv`
 - `docs/figures/2026-02-09_gb200_fullflags_all_0117_node1_nvlink_topology.png`
 - `docs/figures/2026-02-09_gb200_fullflags_all_0117_node2_nvlink_topology.png`
+- `docs/figures/2026-02-09_gb200_fullflags_all_0117_node1_nvbandwidth_sums.png`
 
 ## Repro Steps
 Canonical command used for the baseline run (`2026-02-09_gb200_fullflags_all_0117`):
@@ -339,7 +357,7 @@ For fresh reruns, keep the same flags and only change `--run-id`.
 
 Optional follow-on commands used for the new stakeholder artifacts:
 ```bash
-# Multinode vLLM serving path (strict lock + structured outputs)
+# Multinode vLLM serving path (strict lock + digest-pinned image parity + structured outputs)
 scripts/repro/run_vllm_serve_multinode_container.sh \
   --run-id 2026-02-09_gb200_fullflags_all_0117 \
   --hosts node1,node2 \
@@ -352,7 +370,8 @@ scripts/repro/run_vllm_serve_multinode_container.sh \
   --concurrency 16 \
   --num-prompts 64 \
   --socket-ifname enP22p3s0f3 \
-  --nccl-ib-hca mlx5_0,mlx5_1,mlx5_4,mlx5_5
+  --nccl-ib-hca mlx5_0,mlx5_1,mlx5_4,mlx5_5 \
+  --image vllm/vllm-openai:cu130-nightly-aarch64
 
 # NVLink/NVSwitch topology artifacts from node meta files
 python3 analysis/plot_nvlink_topology.py \
@@ -364,6 +383,19 @@ python3 analysis/plot_nvlink_topology.py \
   --meta results/structured/2026-02-09_gb200_fullflags_all_0117_node2_meta.json \
   --fig-out docs/figures/2026-02-09_gb200_fullflags_all_0117_node2_nvlink_topology.png \
   --summary-out results/structured/2026-02-09_gb200_fullflags_all_0117_node2_nvlink_topology.json
+
+# Dedicated strict-lock nvbandwidth bundle
+scripts/repro/run_nvbandwidth_bundle.sh \
+  --run-id 2026-02-09_gb200_fullflags_all_0117 \
+  --label node1 \
+  --suite-dir /home/ubuntu/ai-performance-engineering/code/clustermax \
+  --image ghcr.io/jordannanos/cmax-compute:latest \
+  --quick
+
+python3 analysis/plot_nvbandwidth_sums.py \
+  --input results/structured/2026-02-09_gb200_fullflags_all_0117_node1_nvbandwidth_sums.csv \
+  --out docs/figures/2026-02-09_gb200_fullflags_all_0117_node1_nvbandwidth_sums.png \
+  --title "nvbandwidth SUM metrics: 2026-02-09_gb200_fullflags_all_0117 node1"
 ```
 
 ## `--disable-fp4` if needed
@@ -428,9 +460,9 @@ PY
 - Sanitized cluster metadata aggregator: [latest_cluster_meta][latest_cluster_meta]
 - Clean preflight (DCGM before/after): [preflight_latest][preflight_latest]
 - Clean health summary: [latest_health][latest_health]
-- Multinode vLLM path artifact (strict-lock + structured failure package): [results/structured/2026-02-09_gb200_fullflags_all_0117_node1_vllm_multinode_serve.json](results/structured/2026-02-09_gb200_fullflags_all_0117_node1_vllm_multinode_serve.json)
+- Multinode vLLM path artifact (strict-lock + digest-pinned passing run): [results/structured/2026-02-09_gb200_fullflags_all_0117_node1_vllm_multinode_serve.json](results/structured/2026-02-09_gb200_fullflags_all_0117_node1_vllm_multinode_serve.json)
 - NVLink/NVSwitch topology artifacts: [node1_nvlink_topology_json][node1_nvlink_topology_json], [node2_nvlink_topology_json][node2_nvlink_topology_json]
-- Manifest summary: `286` files (`106 json`, `23 csv`, `4 jsonl`, `26 png`, `30 txt`, `97 log`).
+- nvbandwidth bundle artifacts: [results/structured/2026-02-09_gb200_fullflags_all_0117_node1_nvbandwidth.json](results/structured/2026-02-09_gb200_fullflags_all_0117_node1_nvbandwidth.json), [docs/figures/2026-02-09_gb200_fullflags_all_0117_node1_nvbandwidth_sums.png](docs/figures/2026-02-09_gb200_fullflags_all_0117_node1_nvbandwidth_sums.png)
 - Historical incident bundle (only what changed decisions):
   - Historical run (`2026-02-08_032814_cloud_eval_full_fixed`) service/context snapshot: [results/structured/2026-02-08_032814_cloud_eval_full_fixed_preflight_services.json](results/structured/2026-02-08_032814_cloud_eval_full_fixed_preflight_services.json)
   - NVLS failure excerpt: [results/structured/2026-02-08_025442_cloud_eval_full_health_suite_extended_node1node2_nccl_all_reduce_perf.error_excerpt.txt](results/structured/2026-02-08_025442_cloud_eval_full_health_suite_extended_node1node2_nccl_all_reduce_perf.error_excerpt.txt)
@@ -438,7 +470,7 @@ PY
 
 ## Repository Handoff (GitHub)
 - Repository URL: `git@github.com:cfregly/ai-performance-engineering.git`
-- Commit for review (current local HEAD): `d58da6a469df535849e08c1aba2d3ea46c542ec1`
+- Commit for review (current local HEAD): `e98955f1b9e54185bf4f07b00958433eabb95163`
 - Collaborator access (`JordanNanos`) status: not recorded in this artifact package; requires explicit owner confirmation during handoff.
 
 ## Appendix
@@ -459,8 +491,8 @@ PY
 | dmesg/log pipeline (promtail or equivalent) | PARTIAL | Incident-focused kernel evidence was captured during investigation, but no continuous log pipeline was evaluated in this package. |
 | TFLOPs/SM active/occupancy via DCGM profiling counters | MISSING | Not captured in this evaluation package. |
 | Nsight Compute availability for users | UNKNOWN | Not fully validated as a managed user-facing workflow here. |
-| NVLink/XGMI throughput visibility | PARTIAL | Dedicated NVLink/NVSwitch topology artifacts are now bundled (`node1/node2`), but a dedicated throughput microbenchmark bundle is still not included. [node1_nvlink_topology_json] [node2_nvlink_topology_json] |
-| PCIe host<->GPU throughput visibility | PARTIAL | Capability was checked during investigation, but dedicated `nvbandwidth` artifacts are not bundled in this report package. |
+| NVLink/XGMI throughput visibility | YES | Dedicated NVLink/NVSwitch topology artifacts and a strict-lock `nvbandwidth` bundle are both included. [node1_nvlink_topology_json] [node2_nvlink_topology_json] [results/structured/2026-02-09_gb200_fullflags_all_0117_node1_nvbandwidth.json](results/structured/2026-02-09_gb200_fullflags_all_0117_node1_nvbandwidth.json) |
+| PCIe host<->GPU throughput visibility | YES | Dedicated `nvbandwidth` artifacts are now bundled, including H2D/D2H SUM metrics and clock-lock evidence. [results/structured/2026-02-09_gb200_fullflags_all_0117_node1_nvbandwidth.json](results/structured/2026-02-09_gb200_fullflags_all_0117_node1_nvbandwidth.json) |
 | InfiniBand/RoCE throughput visibility | YES | IB perftest + NCCL multi-node suite evidence captured. [latest_health] |
 | User/group quotas and scheduler history | MISSING | No scheduler resource governance surface in scope. |
 | Active + passive health-check integration | PARTIAL | Active checks are strong; passive continuous monitoring was not in scope. [latest_health] [preflight_latest] |
@@ -480,7 +512,7 @@ PY
 ## Activity Log
 <!-- ACTIVITY_LOG_START -->
 - 2026-02-09: Executed full multi-node suite with GB200-focused flags under `RUN_ID=2026-02-09_gb200_fullflags_all_0117`; driver status `0` and suite summary `STATUS: OK`.
-- 2026-02-09: Validated complete package generation (`manifest.json` + structured outputs + figures): manifest file count `286` with hashes for all artifacts.
+- 2026-02-09: Validated complete package generation (`manifest.json` + structured outputs + figures): manifest file count `297` with hashes for all artifacts.
 - 2026-02-09: Added sanitized cluster metadata aggregator `results/structured/2026-02-09_gb200_fullflags_all_0117_cluster_meta.json` and linked it as the single metadata reference in report sections.
 - 2026-02-09: Fixed MAMF concurrent-per-GPU clock-lock mapping in `scripts/run_mamf_finder_all_nodes.sh` (set lock target to logical device `0` when `CUDA_VISIBLE_DEVICES` is pinned), removing `Invalid device id` failures.
 - 2026-02-09: Re-ran MAMF on both nodes (`8/8` GPUs) with the fixed path and refreshed `docs/figures/2026-02-09_gb200_fullflags_all_0117_mamf_straggler.png`.
@@ -489,6 +521,8 @@ PY
 - 2026-02-09: Added native multi-node vLLM harness path (`scripts/repro/run_vllm_serve_multinode_container.sh`) with strict lock metadata on both nodes and structured failure outputs.
 - 2026-02-09: Executed the multi-node vLLM path for `RUN_ID=2026-02-09_gb200_fullflags_all_0117`; run failed before server readiness with `ModuleNotFoundError: vllm.config.kernel`, captured under `results/structured/2026-02-09_gb200_fullflags_all_0117_node1_vllm_multinode_serve.json`.
 - 2026-02-09: Added dedicated NVLink/NVSwitch topology artifacts for both nodes (`*_nvlink_topology.json` + `*_nvlink_topology.png`) from captured `nvidia-smi topo -m` metadata.
+- 2026-02-09: Added automatic cross-node image digest pinning to `scripts/repro/run_vllm_serve_multinode_container.sh` and re-ran multinode serving to a passing `status=ok` artifact with TP=8 (`results/structured/2026-02-09_gb200_fullflags_all_0117_node1_vllm_multinode_serve.json`).
+- 2026-02-09: Added dedicated strict-lock `nvbandwidth` bundle path (`scripts/repro/run_nvbandwidth_bundle.sh`) and produced canonical structured+visual artifacts (`node1_nvbandwidth.json`, `node1_nvbandwidth_sums.csv`, `node1_nvbandwidth_sums.png`).
 <!-- ACTIVITY_LOG_END -->
 
 ---

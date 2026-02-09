@@ -96,6 +96,20 @@ Optional extension for 2-node vLLM serving (Ray + TP across nodes):
   --vllm-multinode-ray-port 6379
 ```
 
+Optional dedicated `nvbandwidth` add-on (strict lock + structured JSON/CSV):
+
+```bash
+scripts/repro/run_nvbandwidth_bundle.sh \
+  --run-id <run_id> \
+  --label <label> \
+  --suite-dir /path/to/cluster_perf_suite \
+  --image ghcr.io/jordannanos/cmax-compute:latest \
+  --quick
+python3 analysis/plot_nvbandwidth_sums.py \
+  --input results/structured/<run_id>_<label>_nvbandwidth_sums.csv \
+  --out docs/figures/<run_id>_<label>_nvbandwidth_sums.png
+```
+
 ### 3) Generate / refresh report plots and manifest
 `run_cluster_eval_suite.sh` already does this. If you need to refresh later:
 
@@ -143,6 +157,9 @@ python3 scripts/write_manifest.py --run-id <run_id> --hosts node1,node2 --includ
 - `results/structured/<run_id>_<leader_label>_vllm_multinode_serve.jsonl` (when `--run-vllm-multinode`)
 - `results/structured/<run_id>_<leader_label>_vllm_multinode_leader_clock_lock.json` (when `--run-vllm-multinode`)
 - `results/structured/<run_id>_<worker_label>_vllm_multinode_worker_clock_lock.json` (when `--run-vllm-multinode`)
+- `results/structured/<run_id>_<label>_nvbandwidth.json` (when running `scripts/repro/run_nvbandwidth_bundle.sh`)
+- `results/structured/<run_id>_<label>_nvbandwidth_sums.csv` (when running `scripts/repro/run_nvbandwidth_bundle.sh`)
+- `results/structured/<run_id>_<label>_nvbandwidth_clock_lock.json` (when running `scripts/repro/run_nvbandwidth_bundle.sh`)
 - `results/structured/<run_id>_<label>_gemm_gpu_sanity.csv`
 - `results/structured/<run_id>_<label>_fio.json`
 - `results/structured/<run_id>_node_parity_summary.json`
@@ -167,9 +184,13 @@ python3 scripts/write_manifest.py --run-id <run_id> --hosts node1,node2 --includ
   - `results/structured/2026-02-09_gb200_fullflags_all_0117_node1_vllm_serve_sweep.csv`
   - `docs/figures/2026-02-09_gb200_fullflags_all_0117_node1_vllm_serve_total_tok_s_vs_concurrency.png`
   - `docs/figures/2026-02-09_gb200_fullflags_all_0117_node1_vllm_serve_ttft_vs_concurrency.png`
-- Multi-node vLLM path evidence (latest attempt, strict-lock, structured failure captured):
+- Multi-node vLLM path evidence (latest run passing, strict-lock, digest-pinned image parity across nodes):
   - `results/structured/2026-02-09_gb200_fullflags_all_0117_node1_vllm_multinode_serve.json`
   - `results/structured/2026-02-09_gb200_fullflags_all_0117_node1_vllm_multinode_serve.csv`
+- Dedicated nvbandwidth bundle artifacts:
+  - `results/structured/2026-02-09_gb200_fullflags_all_0117_node1_nvbandwidth.json`
+  - `results/structured/2026-02-09_gb200_fullflags_all_0117_node1_nvbandwidth_sums.csv`
+  - `results/structured/2026-02-09_gb200_fullflags_all_0117_node1_nvbandwidth_clock_lock.json`
 - NVLink/NVSwitch topology artifacts:
   - `results/structured/2026-02-09_gb200_fullflags_all_0117_node1_nvlink_topology.json`
   - `results/structured/2026-02-09_gb200_fullflags_all_0117_node2_nvlink_topology.json`

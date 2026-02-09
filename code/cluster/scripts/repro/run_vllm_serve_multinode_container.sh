@@ -25,6 +25,7 @@ Options:
   --port <port>                  vLLM serving port on leader (default: 8888)
   --ray-port <port>              Ray head port on leader (default: 6379)
   --image <docker_image>         vLLM image (default: auto by architecture)
+                                 Tag refs are auto-pinned to a single repo digest across leader/worker
 
   --socket-ifname <iface>        NCCL socket interface (optional)
   --gloo-socket-ifname <iface>   Gloo socket interface (default: socket-ifname)
@@ -56,6 +57,49 @@ sanitize() {
   local s="$1"
   s="${s//[^A-Za-z0-9_.-]/_}"
   printf '%s' "$s"
+}
+
+image_repo_no_tag() {
+  local ref="$1"
+  local tail=""
+  ref="${ref%%@*}"
+  tail="${ref##*/}"
+  if [[ "$tail" == *:* ]]; then
+    ref="${ref%:*}"
+  fi
+  printf '%s' "$ref"
+}
+
+resolve_pinned_image() {
+  local requested="$1"
+  local expected_repo=""
+  local digests=""
+  local line=""
+
+  if [[ "$requested" == *@sha256:* ]]; then
+    printf '%s\n' "$requested"
+    return 0
+  fi
+
+  docker pull "$requested" >/dev/null 2>&1 || true
+
+  digests="$(docker image inspect "$requested" --format '{{range .RepoDigests}}{{println .}}{{end}}' 2>/dev/null || true)"
+  if [[ -z "$digests" ]]; then
+    echo "ERROR: could not resolve a repo digest for image '$requested'." >&2
+    echo "Use --image <repo@sha256:...> to enforce a fixed digest explicitly." >&2
+    return 1
+  fi
+
+  expected_repo="$(image_repo_no_tag "$requested")"
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    if [[ "$line" == "${expected_repo}@sha256:"* ]]; then
+      printf '%s\n' "$line"
+      return 0
+    fi
+  done <<<"$digests"
+
+  printf '%s\n' "$(printf '%s\n' "$digests" | head -n 1)"
 }
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -257,6 +301,39 @@ if [[ -n "$SSH_KEY" ]]; then
 fi
 WORKER_TARGET="${SSH_USER}@${WORKER_HOST}"
 
+REQUESTED_IMAGE="$CONTAINER_IMAGE"
+PINNED_IMAGE="$(resolve_pinned_image "$CONTAINER_IMAGE")"
+if [[ -z "$PINNED_IMAGE" ]]; then
+  echo "ERROR: unable to resolve pinned image digest from ${CONTAINER_IMAGE}" >&2
+  exit 1
+fi
+PINNED_DIGEST="${PINNED_IMAGE##*@}"
+if [[ "$PINNED_DIGEST" != sha256:* ]]; then
+  echo "ERROR: resolved pinned image does not contain sha256 digest: ${PINNED_IMAGE}" >&2
+  exit 1
+fi
+
+LEADER_IMAGE_ID="$(docker image inspect "$PINNED_IMAGE" --format '{{.Id}}' 2>/dev/null || true)"
+LEADER_IMAGE_REPODIGEST="$(docker image inspect "$PINNED_IMAGE" --format '{{index .RepoDigests 0}}' 2>/dev/null || true)"
+if [[ -z "$LEADER_IMAGE_REPODIGEST" || "$LEADER_IMAGE_REPODIGEST" != *"@${PINNED_DIGEST}" ]]; then
+  echo "ERROR: leader image digest verification failed for ${PINNED_IMAGE}" >&2
+  echo "leader repo digest: ${LEADER_IMAGE_REPODIGEST:-<missing>}" >&2
+  exit 1
+fi
+
+if ! "${SSH_BASE[@]}" "$WORKER_TARGET" "docker pull '$PINNED_IMAGE'" >"$WORKER_LOG" 2>&1; then
+  echo "ERROR: worker failed to pull pinned image ${PINNED_IMAGE}" >&2
+  echo "worker pull log: ${WORKER_LOG}" >&2
+  exit 1
+fi
+WORKER_IMAGE_ID="$("${SSH_BASE[@]}" "$WORKER_TARGET" "docker image inspect '$PINNED_IMAGE' --format '{{.Id}}'" 2>/dev/null || true)"
+WORKER_IMAGE_REPODIGEST="$("${SSH_BASE[@]}" "$WORKER_TARGET" "docker image inspect '$PINNED_IMAGE' --format '{{index .RepoDigests 0}}'" 2>/dev/null || true)"
+if [[ -z "$WORKER_IMAGE_REPODIGEST" || "$WORKER_IMAGE_REPODIGEST" != *"@${PINNED_DIGEST}" ]]; then
+  echo "ERROR: worker image digest verification failed for ${PINNED_IMAGE}" >&2
+  echo "worker repo digest: ${WORKER_IMAGE_REPODIGEST:-<missing>}" >&2
+  exit 1
+fi
+
 WORKER_REMOTE_SCRIPT="$(mktemp)"
 cat > "$WORKER_REMOTE_SCRIPT" <<'WORKER'
 #!/usr/bin/env bash
@@ -326,13 +403,16 @@ echo "hosts:  leader=${LEADER_HOST} worker=${WORKER_HOST}"
 echo "labels: leader=${LEADER_LABEL} worker=${WORKER_LABEL}"
 echo "model=${MODEL} tp=${TP} isl=${ISL} osl=${OSL} concurrency=${CONCURRENCY} num_prompts=${NUM_PROMPTS}"
 echo "socket_if=${SOCKET_IFNAME:-<unset>} gloo_if=${GLOO_SOCKET_IFNAME:-<unset>} nccl_ib_hca=${NCCL_IB_HCA:-<unset>}"
-echo "image=${CONTAINER_IMAGE}"
+echo "image_requested=${REQUESTED_IMAGE}"
+echo "image_pinned=${PINNED_IMAGE}"
+echo "image_digest=${PINNED_DIGEST}"
+echo "leader_image_id=${LEADER_IMAGE_ID:-<unknown>} worker_image_id=${WORKER_IMAGE_ID:-<unknown>}"
 echo ""
 
 set +e
 RUN_ID="$RUN_ID" LABEL="$WORKER_LABEL" \
   "${SSH_BASE[@]}" "$WORKER_TARGET" \
-  "bash -s -- '$ROOT_DIR' '$REMOTE_WORKER_LOCK' '$CONTAINER_IMAGE' '$LEADER_HOST' '$RAY_PORT' '$SOCKET_IFNAME' '$GLOO_SOCKET_IFNAME' '$NCCL_CROSS_NIC' '$NCCL_IB_HCA' '$WORKER_CONTAINER_NAME'" \
+  "bash -s -- '$ROOT_DIR' '$REMOTE_WORKER_LOCK' '$PINNED_IMAGE' '$LEADER_HOST' '$RAY_PORT' '$SOCKET_IFNAME' '$GLOO_SOCKET_IFNAME' '$NCCL_CROSS_NIC' '$NCCL_IB_HCA' '$WORKER_CONTAINER_NAME'" \
   < "$WORKER_REMOTE_SCRIPT" >"$WORKER_LOG" 2>&1 &
 WORKER_SSH_PID=$!
 set -e
@@ -380,7 +460,7 @@ LEADER_DOCKER_ARGS+=(
   -v "$VLLM_CACHE_DIR":/root/.cache/vllm
   -v "$FLASHINFER_CACHE_DIR":/root/.cache/flashinfer
   --entrypoint bash
-  "$CONTAINER_IMAGE"
+  "$PINNED_IMAGE"
   /vllm_multinode_inner.sh
   "$MODEL" "$TP" "$ISL" "$OSL" "$MAX_MODEL_LEN" "$PORT" "$RAY_PORT" "$RAY_CLUSTER_SIZE"
   "$SERVER_READY_TIMEOUT" "$RAY_READY_TIMEOUT" "$CONCURRENCY" "$NUM_PROMPTS"
@@ -416,7 +496,9 @@ python3 - <<'PY' \
   "$MODEL" "$TP" "$ISL" "$OSL" "$CONCURRENCY" "$NUM_PROMPTS" \
   "$LEADER_RC" "$WORKER_RC" "$RESULT_JSON_RAW" "$RESULT_JSON_STRUCT" \
   "$LEADER_LOCK_META" "$WORKER_LOCK_META" "$LEADER_LOG" "$WORKER_LOG" "$SERVER_LOG" "$BENCH_LOG" \
-  "$SUMMARY_JSON" "$SUMMARY_CSV" "$SUMMARY_JSONL"
+  "$SUMMARY_JSON" "$SUMMARY_CSV" "$SUMMARY_JSONL" \
+  "$REQUESTED_IMAGE" "$PINNED_IMAGE" "$PINNED_DIGEST" "$LEADER_IMAGE_ID" "$WORKER_IMAGE_ID" \
+  "$LEADER_IMAGE_REPODIGEST" "$WORKER_IMAGE_REPODIGEST"
 import csv
 import json
 import sys
@@ -447,6 +529,13 @@ from pathlib import Path
     summary_json,
     summary_csv,
     summary_jsonl,
+    requested_image,
+    pinned_image,
+    pinned_digest,
+    leader_image_id,
+    worker_image_id,
+    leader_image_repodigest,
+    worker_image_repodigest,
 ) = sys.argv[1:]
 
 
@@ -565,6 +654,15 @@ payload = {
     "ray_cluster_size": 2,
     "return_codes": {"leader": int(leader_rc), "worker": int(worker_rc)},
     "failure_reason": failure_reason,
+    "image": {
+        "requested": requested_image,
+        "pinned": pinned_image,
+        "digest": pinned_digest,
+        "leader_image_id": leader_image_id,
+        "worker_image_id": worker_image_id,
+        "leader_repodigest": leader_image_repodigest,
+        "worker_repodigest": worker_image_repodigest,
+    },
     "clock_lock": {"leader": leader_lock, "worker": worker_lock},
     "metrics": metrics,
     "artifacts": {

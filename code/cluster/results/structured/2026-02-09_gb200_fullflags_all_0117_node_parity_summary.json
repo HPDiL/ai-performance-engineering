@@ -1,5 +1,5 @@
 {
-  "generated_at_utc": "2026-02-09T03:16:48.163103Z",
+  "generated_at_utc": "2026-02-09T05:56:06.458148Z",
   "inference": {
     "concurrency_at_max_throughput": 512,
     "max_total_token_throughput": 53759.158,

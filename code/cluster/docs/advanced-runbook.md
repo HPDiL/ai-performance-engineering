@@ -10,8 +10,9 @@ Key rule (GPU benchmarks):
 - Canonical validated run (used by the current field report): `2026-02-09_gb200_fullflags_all_0117`.
 - Manifest: `results/structured/2026-02-09_gb200_fullflags_all_0117_manifest.json`.
 - Sanitized cluster metadata: `results/structured/2026-02-09_gb200_fullflags_all_0117_cluster_meta.json`.
-- Multi-node vLLM path attempt (strict-lock + structured failure package): `results/structured/2026-02-09_gb200_fullflags_all_0117_node1_vllm_multinode_serve.json`.
+- Multi-node vLLM path result (strict-lock + digest-pinned image parity): `results/structured/2026-02-09_gb200_fullflags_all_0117_node1_vllm_multinode_serve.json`.
 - NVLink/NVSwitch topology summaries: `results/structured/2026-02-09_gb200_fullflags_all_0117_node1_nvlink_topology.json`, `results/structured/2026-02-09_gb200_fullflags_all_0117_node2_nvlink_topology.json`.
+- Dedicated nvbandwidth bundle: `results/structured/2026-02-09_gb200_fullflags_all_0117_node1_nvbandwidth.json`.
 - Narrative report: `field-report.md`.
 - Claim-to-evidence ledger: `field-report-notes.md`.
 
@@ -273,6 +274,8 @@ scripts/repro/run_vllm_serve_multinode_container.sh \
   --socket-ifname <iface> \
   --nccl-ib-hca mlx5_0,mlx5_1,mlx5_4,mlx5_5
 ```
+`--image <tag>` is supported; the runner auto-resolves a single repo digest and enforces that digest on both leader and worker before launch.
+
 Artifacts:
 - `results/structured/<run_id>_<leader_label>_vllm_multinode_serve.json`
 - `results/structured/<run_id>_<leader_label>_vllm_multinode_serve.csv`
@@ -283,8 +286,8 @@ Artifacts:
 
 Latest known state for the canonical run (`2026-02-09_gb200_fullflags_all_0117`):
 - command path executed correctly with strict lock on both nodes
-- benchmark failed before ready with `ModuleNotFoundError: No module named 'vllm.config.kernel'` in Ray workers
-- failure is preserved as a reproducible structured artifact, not dropped
+- benchmark completed successfully (`status=ok`) at TP=8 across both nodes
+- result includes image provenance showing identical digest on both nodes (`sha256:5b0c4bc6be06fcbff9bfa9200981a402e1b3d7e50b58793f814c20c0f91f6962`)
 
 ### 8c) NVLink/NVSwitch Topology Artifact
 Generate topology figure + structured summary from node meta (`nvidia-smi topo -m`):
@@ -294,6 +297,22 @@ python3 analysis/plot_nvlink_topology.py \
   --fig-out docs/figures/<run_id>_<label>_nvlink_topology.png \
   --summary-out results/structured/<run_id>_<label>_nvlink_topology.json
 ```
+
+### 8d) Dedicated nvbandwidth Bundle
+Run a strict-lock `nvbandwidth` bundle (containerized) and emit structured summaries:
+```bash
+scripts/repro/run_nvbandwidth_bundle.sh \
+  --run-id <run_id> \
+  --label <label> \
+  --suite-dir /path/to/cluster_perf_suite \
+  --image ghcr.io/jordannanos/cmax-compute:latest \
+  --quick
+```
+Artifacts:
+- `results/structured/<run_id>_<label>_nvbandwidth.json`
+- `results/structured/<run_id>_<label>_nvbandwidth_sums.csv`
+- `results/structured/<run_id>_<label>_nvbandwidth_clock_lock.json`
+- `results/raw/<run_id>_<label>_nvbandwidth/nvbandwidth.log`
 
 ### 9) Compute Sanity (GEMM per GPU, all nodes)
 ```bash
