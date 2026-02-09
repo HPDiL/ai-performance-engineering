@@ -11,7 +11,7 @@ Runs a reusable "field report" eval suite:
   2) Benchmark A: NCCL all_reduce_perf (single-node + multi-node)
   3) Optional: cluster health suite (iperf/IB/NCCL/torchdist, with optional GDR)
   4) Benchmark B: vLLM online serving sweep (containerized, single-node)
-  5) Optional: vLLM multinode serving benchmark (Ray, 2-node)
+  5) Optional: vLLM multinode serving benchmark (Ray, 2-node; auto-on for multi-node runs)
   6) Benchmark C: BF16 GEMM per-GPU sanity (all nodes)
   7) Optional FP4 checks: DeepGEMM FP8xFP4 smoke + grouped GEMM (all nodes)
   8) Optional high-impact extras (ml-engineering parity):
@@ -21,8 +21,9 @@ Runs a reusable "field report" eval suite:
   10) Optional: NUMA memory-bandwidth probe (all nodes)
   11) Optional: end-to-end transformer train-step benchmark (single-node + multi-node)
   12) Optional: checkpoint-like I/O benchmark (all nodes)
-  13) Storage: fio (local node)
-  14) Plots (includes NVLink topology) + manifest refresh
+  13) Storage: fio (all nodes)
+  14) Optional: nvbandwidth bundle (all nodes; auto-on for multi-node runs)
+  15) Plots (includes NVLink topology) + manifest refresh + artifact validation
 
 Notes:
   - GPU benchmarks are strict: they FAIL if GPU clock lock cannot be acquired.
@@ -51,7 +52,8 @@ Options:
   --osl <n>                vLLM output seq len (default: 1024)
   --concurrency-range "…"  vLLM concurrencies (default: "32 64 128 256 512")
   --port <port>            vLLM server port (default: 8888)
-  --run-vllm-multinode     Run 2-node vLLM serving benchmark via Ray (default: off)
+  --run-vllm-multinode     Force-enable 2-node vLLM serving benchmark via Ray
+  --skip-vllm-multinode    Force-disable 2-node vLLM serving benchmark via Ray
   --vllm-multinode-concurrency <n>  Multinode vLLM max concurrency (single-point mode, default: 64)
   --vllm-multinode-concurrency-range "..."
                            Multinode vLLM concurrency sweep values (space/comma-separated).
@@ -99,6 +101,12 @@ Options:
 
   --fio-test-dir <path>    fio directory (default: /tmp)
   --fio-runtime <sec>      fio runtime per test (default: 30)
+  --run-nvbandwidth        Force-enable nvbandwidth bundle (all nodes)
+  --skip-nvbandwidth       Force-disable nvbandwidth bundle
+  --nvbandwidth-runtime <host|container>  nvbandwidth runtime (default: host)
+  --nvbandwidth-image <image>             nvbandwidth image for runtime=container
+  --nvbandwidth-bin <path>                nvbandwidth executable for runtime=host (default: nvbandwidth)
+  --nvbandwidth-quick      Use reduced nvbandwidth testcase subset
 
   --health-suite <mode>    Optional multi-node diagnostics:
                            off|collectives|base|extended (default: collectives)
@@ -201,6 +209,7 @@ ISL="1024"
 OSL="1024"
 CONCURRENCY_RANGE="32 64 128 256 512"
 PORT="8888"
+RUN_VLLM_MULTINODE_MODE="auto"
 RUN_VLLM_MULTINODE=0
 VLLM_MULTINODE_CONCURRENCY="64"
 VLLM_MULTINODE_CONCURRENCY_RANGE=""
@@ -237,6 +246,12 @@ BOOTSTRAP_TORCH_VERSION="2.10.0a0+a36e1d39eb.nv26.01.42222806"
 
 FIO_TEST_DIR="/tmp"
 FIO_RUNTIME="30"
+RUN_NVBANDWIDTH_MODE="auto"
+RUN_NVBANDWIDTH=0
+NVBANDWIDTH_RUNTIME="host"
+NVBANDWIDTH_IMAGE=""
+NVBANDWIDTH_BIN="nvbandwidth"
+NVBANDWIDTH_QUICK=0
 
 HEALTH_SUITE_MODE="collectives"
 HEALTH_GDR=0
@@ -324,7 +339,8 @@ while [[ $# -gt 0 ]]; do
     --osl) OSL="$2"; shift 2 ;;
     --concurrency-range) CONCURRENCY_RANGE="$2"; shift 2 ;;
     --port) PORT="$2"; shift 2 ;;
-    --run-vllm-multinode) RUN_VLLM_MULTINODE=1; shift ;;
+    --run-vllm-multinode) RUN_VLLM_MULTINODE_MODE="on"; shift ;;
+    --skip-vllm-multinode) RUN_VLLM_MULTINODE_MODE="off"; shift ;;
     --vllm-multinode-concurrency) VLLM_MULTINODE_CONCURRENCY="$2"; shift 2 ;;
     --vllm-multinode-concurrency-range) VLLM_MULTINODE_CONCURRENCY_RANGE="$2"; shift 2 ;;
     --vllm-multinode-num-prompts) VLLM_MULTINODE_NUM_PROMPTS="$2"; shift 2 ;;
@@ -364,6 +380,12 @@ while [[ $# -gt 0 ]]; do
 
     --fio-test-dir) FIO_TEST_DIR="$2"; shift 2 ;;
     --fio-runtime) FIO_RUNTIME="$2"; shift 2 ;;
+    --run-nvbandwidth) RUN_NVBANDWIDTH_MODE="on"; shift ;;
+    --skip-nvbandwidth) RUN_NVBANDWIDTH_MODE="off"; shift ;;
+    --nvbandwidth-runtime) NVBANDWIDTH_RUNTIME="$2"; shift 2 ;;
+    --nvbandwidth-image) NVBANDWIDTH_IMAGE="$2"; shift 2 ;;
+    --nvbandwidth-bin) NVBANDWIDTH_BIN="$2"; shift 2 ;;
+    --nvbandwidth-quick) NVBANDWIDTH_QUICK=1; shift ;;
 
     --health-suite) HEALTH_SUITE_MODE="$2"; shift 2 ;;
     --health-gdr) HEALTH_GDR=1; shift ;;
@@ -466,6 +488,23 @@ if [[ -n "$TRAIN_PRECISION" && "$TRAIN_PRECISION" != "bf16" && "$TRAIN_PRECISION
   exit 2
 fi
 
+if [[ "$RUN_VLLM_MULTINODE_MODE" != "auto" && "$RUN_VLLM_MULTINODE_MODE" != "on" && "$RUN_VLLM_MULTINODE_MODE" != "off" ]]; then
+  echo "ERROR: invalid vLLM multinode mode: ${RUN_VLLM_MULTINODE_MODE}" >&2
+  exit 2
+fi
+if [[ "$RUN_NVBANDWIDTH_MODE" != "auto" && "$RUN_NVBANDWIDTH_MODE" != "on" && "$RUN_NVBANDWIDTH_MODE" != "off" ]]; then
+  echo "ERROR: invalid nvbandwidth mode: ${RUN_NVBANDWIDTH_MODE}" >&2
+  exit 2
+fi
+if [[ "$NVBANDWIDTH_RUNTIME" != "host" && "$NVBANDWIDTH_RUNTIME" != "container" ]]; then
+  echo "ERROR: --nvbandwidth-runtime must be host or container (got: ${NVBANDWIDTH_RUNTIME})" >&2
+  exit 2
+fi
+if [[ "$NVBANDWIDTH_RUNTIME" == "container" && -z "$NVBANDWIDTH_IMAGE" ]]; then
+  echo "ERROR: --nvbandwidth-image is required when --nvbandwidth-runtime=container" >&2
+  exit 2
+fi
+
 if [[ -n "$VLLM_MULTINODE_CONCURRENCY_RANGE" ]]; then
   VLLM_MULTINODE_CONCURRENCY_RANGE="${VLLM_MULTINODE_CONCURRENCY_RANGE//,/ }"
   for c in $VLLM_MULTINODE_CONCURRENCY_RANGE; do
@@ -550,6 +589,31 @@ IFS=',' read -r -a HOST_ARR <<<"$HOSTS"
 IFS=',' read -r -a LABEL_ARR <<<"$LABELS"
 if [[ -n "$LABELS" && "${#LABEL_ARR[@]}" -ne "${#HOST_ARR[@]}" ]]; then
   echo "ERROR: --labels count must match --hosts count" >&2
+  exit 2
+fi
+
+if [[ "$RUN_VLLM_MULTINODE_MODE" == "on" ]]; then
+  RUN_VLLM_MULTINODE=1
+elif [[ "$RUN_VLLM_MULTINODE_MODE" == "off" ]]; then
+  RUN_VLLM_MULTINODE=0
+elif [[ "${#HOST_ARR[@]}" -gt 1 ]]; then
+  RUN_VLLM_MULTINODE=1
+else
+  RUN_VLLM_MULTINODE=0
+fi
+
+if [[ "$RUN_NVBANDWIDTH_MODE" == "on" ]]; then
+  RUN_NVBANDWIDTH=1
+elif [[ "$RUN_NVBANDWIDTH_MODE" == "off" ]]; then
+  RUN_NVBANDWIDTH=0
+elif [[ "${#HOST_ARR[@]}" -gt 1 ]]; then
+  RUN_NVBANDWIDTH=1
+else
+  RUN_NVBANDWIDTH=0
+fi
+
+if [[ "$RUN_VLLM_MULTINODE_MODE" == "on" && "${#HOST_ARR[@]}" -lt 2 ]]; then
+  echo "ERROR: --run-vllm-multinode requires at least 2 hosts" >&2
   exit 2
 fi
 
@@ -640,6 +704,115 @@ run_step() {
   return 0
 }
 
+sanitize_label() {
+  local raw="$1"
+  raw="${raw//./_}"
+  raw="${raw//:/_}"
+  echo "$raw"
+}
+
+label_for_index() {
+  local idx="$1"
+  local host="${HOST_ARR[$idx]}"
+  if [[ -n "$LABELS" ]]; then
+    local lbl
+    lbl="$(echo "${LABEL_ARR[$idx]}" | xargs)"
+    if [[ -n "$lbl" ]]; then
+      echo "$lbl"
+      return 0
+    fi
+  fi
+  echo "$(sanitize_label "$host")"
+}
+
+validate_required_artifacts() {
+  local missing=0
+  local path=""
+  local label=""
+
+  for idx in "${!HOST_ARR[@]}"; do
+    label="$(label_for_index "$idx")"
+    path="${ROOT_DIR}/results/structured/${RUN_ID}_${label}_fio.json"
+    if [[ ! -f "$path" ]]; then
+      echo "ERROR: missing required fio artifact: ${path}" >&2
+      missing=1
+    fi
+  done
+
+  if [[ "$RUN_NVBANDWIDTH" -eq 1 ]]; then
+    for idx in "${!HOST_ARR[@]}"; do
+      label="$(label_for_index "$idx")"
+      for suffix in "_nvbandwidth.json" "_nvbandwidth_sums.csv" "_nvbandwidth_clock_lock.json"; do
+        path="${ROOT_DIR}/results/structured/${RUN_ID}_${label}${suffix}"
+        if [[ ! -f "$path" ]]; then
+          echo "ERROR: missing required nvbandwidth artifact: ${path}" >&2
+          missing=1
+        fi
+      done
+    done
+  fi
+
+  if [[ "$RUN_VLLM_MULTINODE" -eq 1 ]]; then
+    local leader_label worker_label
+    leader_label="$(label_for_index 0)"
+    worker_label="$(label_for_index 1)"
+
+    for suffix in "_vllm_multinode_serve.json" "_vllm_multinode_serve.csv" "_vllm_multinode_serve.jsonl"; do
+      path="${ROOT_DIR}/results/structured/${RUN_ID}_${leader_label}${suffix}"
+      if [[ ! -f "$path" ]]; then
+        echo "ERROR: missing required multinode vLLM artifact: ${path}" >&2
+        missing=1
+      fi
+    done
+    for suffix in "_vllm_multinode_leader_clock_lock.json" "_vllm_multinode_worker_clock_lock.json"; do
+      if [[ "$suffix" == *_leader_clock_lock.json ]]; then
+        path="${ROOT_DIR}/results/structured/${RUN_ID}_${leader_label}${suffix}"
+      else
+        path="${ROOT_DIR}/results/structured/${RUN_ID}_${worker_label}${suffix}"
+      fi
+      if [[ ! -f "$path" ]]; then
+        echo "ERROR: missing required multinode vLLM lock artifact: ${path}" >&2
+        missing=1
+      fi
+    done
+  fi
+
+  if [[ "${#HOST_ARR[@]}" -gt 1 && "$HEALTH_SUITE_MODE" != "off" && "$HEALTH_GDR" -eq 1 ]]; then
+    local -a hs_summaries=()
+    shopt -s nullglob
+    hs_summaries=( "${ROOT_DIR}/results/structured/${RUN_ID}_health_suite_${HEALTH_SUITE_MODE}_"*"_cluster_health_suite_summary.json" )
+    shopt -u nullglob
+    if [[ "${#hs_summaries[@]}" -eq 0 ]]; then
+      echo "ERROR: health suite summary missing; cannot verify effective GDR." >&2
+      missing=1
+    else
+      if ! python3 - "${hs_summaries[0]}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+summary_path = Path(sys.argv[1])
+summary = json.loads(summary_path.read_text(encoding="utf-8"))
+gdr = summary.get("gdr") or {}
+if not bool(gdr.get("requested")):
+    raise SystemExit(f"GDR requested flag is false in {summary_path}")
+if not bool(gdr.get("effective_enabled")):
+    reason = gdr.get("disabled_reason")
+    raise SystemExit(f"GDR effective_enabled is false in {summary_path}; reason={reason}")
+PY
+      then
+        echo "ERROR: health suite GDR verification failed for ${hs_summaries[0]}" >&2
+        missing=1
+      fi
+    fi
+  fi
+
+  if [[ "$missing" -ne 0 ]]; then
+    return 1
+  fi
+  return 0
+}
+
 echo "========================================"
 echo "Cluster Eval Suite"
 echo "========================================"
@@ -660,9 +833,16 @@ if [[ "${#HOST_ARR[@]}" -gt 1 ]]; then
 fi
 echo "vLLM: model=${MODEL} tp=${TP:-<auto>} isl=${ISL} osl=${OSL} conc='${CONCURRENCY_RANGE}' port=${PORT}"
 if [[ "$RUN_VLLM_MULTINODE" -eq 1 ]]; then
-  echo "vLLM(multinode): enabled conc='${VLLM_MULTINODE_CONCURRENCY_VALUES[*]}' prompts=${VLLM_MULTINODE_NUM_PROMPTS:-<auto>} ray_port=${VLLM_MULTINODE_RAY_PORT} ray_timeout_s=${VLLM_MULTINODE_RAY_TIMEOUT} server_timeout_s=${VLLM_MULTINODE_SERVER_TIMEOUT} worker_startup_wait_s=${VLLM_MULTINODE_WORKER_STARTUP_WAIT} image=${VLLM_MULTINODE_IMAGE:-<auto>}"
+  echo "vLLM(multinode): enabled mode=${RUN_VLLM_MULTINODE_MODE} conc='${VLLM_MULTINODE_CONCURRENCY_VALUES[*]}' prompts=${VLLM_MULTINODE_NUM_PROMPTS:-<auto>} ray_port=${VLLM_MULTINODE_RAY_PORT} ray_timeout_s=${VLLM_MULTINODE_RAY_TIMEOUT} server_timeout_s=${VLLM_MULTINODE_SERVER_TIMEOUT} worker_startup_wait_s=${VLLM_MULTINODE_WORKER_STARTUP_WAIT} image=${VLLM_MULTINODE_IMAGE:-<auto>}"
+else
+  echo "vLLM(multinode): disabled mode=${RUN_VLLM_MULTINODE_MODE}"
 fi
 echo "fio: test_dir=${FIO_TEST_DIR} runtime_s=${FIO_RUNTIME}"
+if [[ "$RUN_NVBANDWIDTH" -eq 1 ]]; then
+  echo "nvbandwidth: enabled mode=${RUN_NVBANDWIDTH_MODE} runtime=${NVBANDWIDTH_RUNTIME} quick=${NVBANDWIDTH_QUICK}"
+else
+  echo "nvbandwidth: disabled mode=${RUN_NVBANDWIDTH_MODE}"
+fi
 echo "health_suite: ${HEALTH_SUITE_MODE}"
 if [[ "$HEALTH_GDR" -eq 1 ]]; then
   echo "health_suite_gdr: enabled gpu=${HEALTH_GDR_GPU} mem_types=${HEALTH_GDR_MEM_TYPES} dmabuf=${HEALTH_GDR_USE_DMABUF}"
@@ -1196,12 +1376,46 @@ if [[ "$RUN_CHECKPOINT_IO" -eq 1 ]]; then
   run_step "checkpoint_io" "${ROOT_DIR}/scripts/run_checkpoint_io_all_nodes.sh" "${ckpt_args[@]}"
 fi
 
-# Storage: fio (local)
-run_step "fio" "${ROOT_DIR}/scripts/run_fio_bench.sh" \
-  --run-id "$RUN_ID" \
-  --label "$PRIMARY_LABEL" \
-  --test-dir "$FIO_TEST_DIR" \
+# Storage: fio (all nodes)
+fio_args=(
+  --run-id "$RUN_ID"
+  --hosts "$HOSTS"
+  --ssh-user "$SSH_USER"
+  --test-dir "$FIO_TEST_DIR"
   --runtime "$FIO_RUNTIME"
+)
+if [[ -n "$LABELS" ]]; then
+  fio_args+=(--labels "$LABELS")
+fi
+if [[ -n "$SSH_KEY" ]]; then
+  fio_args+=(--ssh-key "$SSH_KEY")
+fi
+run_step "fio_all_nodes" "${ROOT_DIR}/scripts/run_fio_all_nodes.sh" "${fio_args[@]}"
+
+# Optional: nvbandwidth bundle (all nodes)
+if [[ "$RUN_NVBANDWIDTH" -eq 1 ]]; then
+  nvbw_args=(
+    --run-id "$RUN_ID"
+    --hosts "$HOSTS"
+    --ssh-user "$SSH_USER"
+    --runtime "$NVBANDWIDTH_RUNTIME"
+  )
+  if [[ -n "$LABELS" ]]; then
+    nvbw_args+=(--labels "$LABELS")
+  fi
+  if [[ -n "$SSH_KEY" ]]; then
+    nvbw_args+=(--ssh-key "$SSH_KEY")
+  fi
+  if [[ "$NVBANDWIDTH_RUNTIME" == "container" ]]; then
+    nvbw_args+=(--image "$NVBANDWIDTH_IMAGE")
+  else
+    nvbw_args+=(--nvbw-bin "$NVBANDWIDTH_BIN")
+  fi
+  if [[ "$NVBANDWIDTH_QUICK" -eq 1 ]]; then
+    nvbw_args+=(--quick)
+  fi
+  run_step "nvbandwidth_all_nodes" "${ROOT_DIR}/scripts/run_nvbandwidth_bundle_all_nodes.sh" "${nvbw_args[@]}"
+fi
 
 # Plotting (best-effort)
 if [[ -f "${ROOT_DIR}/results/structured/${RUN_ID}_node1_nccl.json" ]]; then
@@ -1232,11 +1446,14 @@ if [[ -f "${ROOT_DIR}/results/structured/${RUN_ID}_${PRIMARY_LABEL}_vllm_serve_s
     --run-id "${RUN_ID}_${PRIMARY_LABEL}"
 fi
 
-if [[ -f "${ROOT_DIR}/results/structured/${RUN_ID}_${PRIMARY_LABEL}_vllm_multinode_serve.csv" ]]; then
-  run_step "plot_vllm_serve_multinode" python3 "${ROOT_DIR}/analysis/plot_vllm_serve_sweep.py" \
-    --input "${ROOT_DIR}/results/structured/${RUN_ID}_${PRIMARY_LABEL}_vllm_multinode_serve.csv" \
-    --out-dir "${ROOT_DIR}/docs/figures" \
-    --run-id "${RUN_ID}_${PRIMARY_LABEL}_multinode"
+if [[ "$RUN_VLLM_MULTINODE" -eq 1 ]]; then
+  vllm_multi_label="$(label_for_index 0)"
+  if [[ -f "${ROOT_DIR}/results/structured/${RUN_ID}_${vllm_multi_label}_vllm_multinode_serve.csv" ]]; then
+    run_step "plot_vllm_serve_multinode" python3 "${ROOT_DIR}/analysis/plot_vllm_serve_sweep.py" \
+      --input "${ROOT_DIR}/results/structured/${RUN_ID}_${vllm_multi_label}_vllm_multinode_serve.csv" \
+      --out-dir "${ROOT_DIR}/docs/figures" \
+      --run-id "${RUN_ID}_${vllm_multi_label}_multinode"
+  fi
 fi
 
 if [[ "${#HOST_ARR[@]}" -gt 1 && "$HEALTH_SUITE_MODE" != "off" ]]; then
@@ -1305,10 +1522,27 @@ if [[ "$ENABLE_NCCL_ALGO_COMPARISON" -eq 1 ]]; then
   fi
 fi
 
-if [[ -f "${ROOT_DIR}/results/structured/${RUN_ID}_${PRIMARY_LABEL}_fio.json" ]]; then
-  run_step "plot_fio" python3 "${ROOT_DIR}/analysis/plot_fio.py" \
-    --input "${ROOT_DIR}/results/structured/${RUN_ID}_${PRIMARY_LABEL}_fio.json" \
-    --out "${ROOT_DIR}/docs/figures/${RUN_ID}_${PRIMARY_LABEL}_fio.png"
+shopt -s nullglob
+fio_inputs=( "${ROOT_DIR}/results/structured/${RUN_ID}_"*_fio.json )
+shopt -u nullglob
+for fio_in in "${fio_inputs[@]}"; do
+  fio_base="$(basename "$fio_in" .json)"
+  run_step "plot_fio_${fio_base}" python3 "${ROOT_DIR}/analysis/plot_fio.py" \
+    --input "$fio_in" \
+    --out "${ROOT_DIR}/docs/figures/${fio_base}.png"
+done
+
+if [[ "$RUN_NVBANDWIDTH" -eq 1 ]]; then
+  shopt -s nullglob
+  nvbw_sums_inputs=( "${ROOT_DIR}/results/structured/${RUN_ID}_"*_nvbandwidth_sums.csv )
+  shopt -u nullglob
+  for nvbw_csv in "${nvbw_sums_inputs[@]}"; do
+    nvbw_base="$(basename "$nvbw_csv" _sums.csv)"
+    run_step "plot_nvbandwidth_${nvbw_base}" python3 "${ROOT_DIR}/analysis/plot_nvbandwidth_sums.py" \
+      --input "$nvbw_csv" \
+      --out "${ROOT_DIR}/docs/figures/${nvbw_base}_sums.png" \
+      --title "nvbandwidth SUM metrics ${nvbw_base}"
+  done
 fi
 
 if [[ -f "${ROOT_DIR}/results/structured/${RUN_ID}_${PRIMARY_LABEL}_c2c_memcpy.json" ]]; then
@@ -1372,6 +1606,8 @@ run_step "plot_cluster_story_dashboard" python3 "${ROOT_DIR}/analysis/plot_clust
   --node-labels "${dashboard_node_labels_csv}" \
   --fig-out "${ROOT_DIR}/docs/figures/${RUN_ID}_cluster_story_dashboard.png" \
   --summary-out "${ROOT_DIR}/results/structured/${RUN_ID}_node_parity_summary.json"
+
+run_step "validate_required_artifacts" validate_required_artifacts
 
 manifest_args=(--run-id "$RUN_ID" --hosts "$HOSTS" --include-figures)
 if [[ -n "$LABELS" ]]; then

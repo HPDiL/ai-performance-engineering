@@ -661,12 +661,12 @@ preflight() {
       fi
     fi
     if [[ "$GDR_ENABLE" -eq 1 ]]; then
-      if ! ib_write_bw --help 2>/dev/null | grep -q -- "--use_cuda"; then
+      if ! (ib_write_bw --help 2>/dev/null || true) | grep -q -- "--use_cuda"; then
         echo "WARNING: Local ib_write_bw does not expose --use_cuda (disabling --gdr checks)" >&2
         gdr_usable=0
         gdr_reason_parts+=("local ib_write_bw lacks --use_cuda")
       fi
-      if ! ib_write_lat --help 2>/dev/null | grep -q -- "--use_cuda"; then
+      if ! (ib_write_lat --help 2>/dev/null || true) | grep -q -- "--use_cuda"; then
         echo "WARNING: Local ib_write_lat does not expose --use_cuda (disabling --gdr checks)" >&2
         gdr_usable=0
         gdr_reason_parts+=("local ib_write_lat lacks --use_cuda")
@@ -715,12 +715,12 @@ preflight() {
       fi
     fi
     if [[ "$GDR_ENABLE" -eq 1 ]]; then
-      if ! remote "ib_write_bw --help 2>/dev/null | grep -q -- '--use_cuda'"; then
+      if ! remote "(ib_write_bw --help 2>/dev/null || true) | grep -q -- '--use_cuda'"; then
         echo "WARNING: Remote ib_write_bw does not expose --use_cuda on ${HOST1} (disabling --gdr checks)" >&2
         gdr_usable=0
         gdr_reason_parts+=("remote ib_write_bw lacks --use_cuda")
       fi
-      if ! remote "ib_write_lat --help 2>/dev/null | grep -q -- '--use_cuda'"; then
+      if ! remote "(ib_write_lat --help 2>/dev/null || true) | grep -q -- '--use_cuda'"; then
         echo "WARNING: Remote ib_write_lat does not expose --use_cuda on ${HOST1} (disabling --gdr checks)" >&2
         gdr_usable=0
         gdr_reason_parts+=("remote ib_write_lat lacks --use_cuda")
@@ -729,13 +729,13 @@ preflight() {
   fi
 
   if [[ "$GDR_ENABLE" -eq 1 && "$gdr_usable" -eq 0 ]]; then
-    GDR_ENABLE=0
     if [[ "${#gdr_reason_parts[@]}" -gt 0 ]]; then
       GDR_DISABLE_REASON="$(IFS='; '; echo "${gdr_reason_parts[*]}")"
     else
       GDR_DISABLE_REASON="gdr requested but perftest --use_cuda checks failed"
     fi
-    echo "WARNING: --gdr requested but prerequisites are not met; continuing with non-GDR IB checks. reason=${GDR_DISABLE_REASON}" >&2
+    echo "ERROR: --gdr requested but prerequisites are not met. reason=${GDR_DISABLE_REASON}" >&2
+    return 1
   fi
   return 0
 }
