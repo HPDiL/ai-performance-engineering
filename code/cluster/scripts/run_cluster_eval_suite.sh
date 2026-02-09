@@ -52,7 +52,10 @@ Options:
   --concurrency-range "…"  vLLM concurrencies (default: "32 64 128 256 512")
   --port <port>            vLLM server port (default: 8888)
   --run-vllm-multinode     Run 2-node vLLM serving benchmark via Ray (default: off)
-  --vllm-multinode-concurrency <n>  Multinode vLLM max concurrency (default: 64)
+  --vllm-multinode-concurrency <n>  Multinode vLLM max concurrency (single-point mode, default: 64)
+  --vllm-multinode-concurrency-range "..."
+                           Multinode vLLM concurrency sweep values (space/comma-separated).
+                           When set, runs one multinode serve pass per value.
   --vllm-multinode-num-prompts <n>  Multinode vLLM prompt count (default: concurrency*10)
   --vllm-multinode-ray-port <port>  Multinode vLLM Ray head port (default: 6379)
   --vllm-multinode-image <image>    Multinode vLLM container image (default: auto by arch)
@@ -187,12 +190,14 @@ CONCURRENCY_RANGE="32 64 128 256 512"
 PORT="8888"
 RUN_VLLM_MULTINODE=0
 VLLM_MULTINODE_CONCURRENCY="64"
+VLLM_MULTINODE_CONCURRENCY_RANGE=""
 VLLM_MULTINODE_NUM_PROMPTS=""
 VLLM_MULTINODE_RAY_PORT="6379"
 VLLM_MULTINODE_IMAGE=""
 VLLM_MULTINODE_RAY_TIMEOUT="300"
 VLLM_MULTINODE_SERVER_TIMEOUT="1200"
 VLLM_MULTINODE_WORKER_STARTUP_WAIT="10"
+VLLM_MULTINODE_CONCURRENCY_VALUES=()
 
 ENABLE_FP4=1
 FP4_SUITE_DIR="${CLUSTER_PERF_SUITE_DIR:-}"
@@ -306,6 +311,7 @@ while [[ $# -gt 0 ]]; do
     --port) PORT="$2"; shift 2 ;;
     --run-vllm-multinode) RUN_VLLM_MULTINODE=1; shift ;;
     --vllm-multinode-concurrency) VLLM_MULTINODE_CONCURRENCY="$2"; shift 2 ;;
+    --vllm-multinode-concurrency-range) VLLM_MULTINODE_CONCURRENCY_RANGE="$2"; shift 2 ;;
     --vllm-multinode-num-prompts) VLLM_MULTINODE_NUM_PROMPTS="$2"; shift 2 ;;
     --vllm-multinode-ray-port) VLLM_MULTINODE_RAY_PORT="$2"; shift 2 ;;
     --vllm-multinode-image) VLLM_MULTINODE_IMAGE="$2"; shift 2 ;;
@@ -442,9 +448,25 @@ if [[ -n "$TRAIN_PRECISION" && "$TRAIN_PRECISION" != "bf16" && "$TRAIN_PRECISION
   exit 2
 fi
 
-if ! [[ "$VLLM_MULTINODE_CONCURRENCY" =~ ^[1-9][0-9]*$ ]]; then
-  echo "ERROR: --vllm-multinode-concurrency must be a positive integer (got: ${VLLM_MULTINODE_CONCURRENCY})" >&2
-  exit 2
+if [[ -n "$VLLM_MULTINODE_CONCURRENCY_RANGE" ]]; then
+  VLLM_MULTINODE_CONCURRENCY_RANGE="${VLLM_MULTINODE_CONCURRENCY_RANGE//,/ }"
+  for c in $VLLM_MULTINODE_CONCURRENCY_RANGE; do
+    if ! [[ "$c" =~ ^[1-9][0-9]*$ ]]; then
+      echo "ERROR: --vllm-multinode-concurrency-range contains non-positive integer '${c}'" >&2
+      exit 2
+    fi
+    VLLM_MULTINODE_CONCURRENCY_VALUES+=("$c")
+  done
+  if [[ "${#VLLM_MULTINODE_CONCURRENCY_VALUES[@]}" -eq 0 ]]; then
+    echo "ERROR: --vllm-multinode-concurrency-range resolved to an empty list" >&2
+    exit 2
+  fi
+else
+  if ! [[ "$VLLM_MULTINODE_CONCURRENCY" =~ ^[1-9][0-9]*$ ]]; then
+    echo "ERROR: --vllm-multinode-concurrency must be a positive integer (got: ${VLLM_MULTINODE_CONCURRENCY})" >&2
+    exit 2
+  fi
+  VLLM_MULTINODE_CONCURRENCY_VALUES=("$VLLM_MULTINODE_CONCURRENCY")
 fi
 if [[ -n "$VLLM_MULTINODE_NUM_PROMPTS" && ! "$VLLM_MULTINODE_NUM_PROMPTS" =~ ^[1-9][0-9]*$ ]]; then
   echo "ERROR: --vllm-multinode-num-prompts must be a positive integer (got: ${VLLM_MULTINODE_NUM_PROMPTS})" >&2
@@ -686,7 +708,7 @@ if [[ "${#HOST_ARR[@]}" -gt 1 ]]; then
 fi
 echo "vLLM: model=${MODEL} tp=${TP:-<auto>} isl=${ISL} osl=${OSL} conc='${CONCURRENCY_RANGE}' port=${PORT}"
 if [[ "$RUN_VLLM_MULTINODE" -eq 1 ]]; then
-  echo "vLLM(multinode): enabled conc=${VLLM_MULTINODE_CONCURRENCY} prompts=${VLLM_MULTINODE_NUM_PROMPTS:-<auto>} ray_port=${VLLM_MULTINODE_RAY_PORT} ray_timeout_s=${VLLM_MULTINODE_RAY_TIMEOUT} server_timeout_s=${VLLM_MULTINODE_SERVER_TIMEOUT} worker_startup_wait_s=${VLLM_MULTINODE_WORKER_STARTUP_WAIT} image=${VLLM_MULTINODE_IMAGE:-<auto>}"
+  echo "vLLM(multinode): enabled conc='${VLLM_MULTINODE_CONCURRENCY_VALUES[*]}' prompts=${VLLM_MULTINODE_NUM_PROMPTS:-<auto>} ray_port=${VLLM_MULTINODE_RAY_PORT} ray_timeout_s=${VLLM_MULTINODE_RAY_TIMEOUT} server_timeout_s=${VLLM_MULTINODE_SERVER_TIMEOUT} worker_startup_wait_s=${VLLM_MULTINODE_WORKER_STARTUP_WAIT} image=${VLLM_MULTINODE_IMAGE:-<auto>}"
 fi
 echo "fio: test_dir=${FIO_TEST_DIR} runtime_s=${FIO_RUNTIME}"
 echo "health_suite: ${HEALTH_SUITE_MODE}"
@@ -888,42 +910,44 @@ run_step "vllm_serve_sweep" "${ROOT_DIR}/scripts/repro/run_vllm_serve_sweep_cont
 
 if [[ "$RUN_VLLM_MULTINODE" -eq 1 ]]; then
   if [[ "${#HOST_ARR[@]}" -gt 1 ]]; then
-    vllm_multi_args=(
-      --run-id "$RUN_ID"
-      --hosts "$HOSTS"
-      --ssh-user "$SSH_USER"
-      --model "$MODEL"
-      --isl "$ISL"
-      --osl "$OSL"
-      --concurrency "$VLLM_MULTINODE_CONCURRENCY"
-      --port "$PORT"
-      --ray-port "$VLLM_MULTINODE_RAY_PORT"
-      --ray-ready-timeout "$VLLM_MULTINODE_RAY_TIMEOUT"
-      --server-ready-timeout "$VLLM_MULTINODE_SERVER_TIMEOUT"
-      --worker-startup-wait "$VLLM_MULTINODE_WORKER_STARTUP_WAIT"
-    )
-    if [[ -n "$LABELS" ]]; then
-      vllm_multi_args+=(--labels "$LABELS")
-    fi
-    if [[ -n "$SSH_KEY" ]]; then
-      vllm_multi_args+=(--ssh-key "$SSH_KEY")
-    fi
-    if [[ -n "$TP" ]]; then
-      vllm_multi_args+=(--tp "$TP")
-    fi
-    if [[ -n "$VLLM_MULTINODE_NUM_PROMPTS" ]]; then
-      vllm_multi_args+=(--num-prompts "$VLLM_MULTINODE_NUM_PROMPTS")
-    fi
-    if [[ -n "$VLLM_MULTINODE_IMAGE" ]]; then
-      vllm_multi_args+=(--image "$VLLM_MULTINODE_IMAGE")
-    fi
-    if [[ -n "$SOCKET_IFNAME" ]]; then
-      vllm_multi_args+=(--socket-ifname "$SOCKET_IFNAME")
-    fi
-    if [[ -n "$NCCL_IB_HCA" ]]; then
-      vllm_multi_args+=(--nccl-ib-hca "$NCCL_IB_HCA")
-    fi
-    run_step "vllm_serve_multinode" "${ROOT_DIR}/scripts/repro/run_vllm_serve_multinode_container.sh" "${vllm_multi_args[@]}"
+    for vllm_multi_conc in "${VLLM_MULTINODE_CONCURRENCY_VALUES[@]}"; do
+      vllm_multi_args=(
+        --run-id "$RUN_ID"
+        --hosts "$HOSTS"
+        --ssh-user "$SSH_USER"
+        --model "$MODEL"
+        --isl "$ISL"
+        --osl "$OSL"
+        --concurrency "$vllm_multi_conc"
+        --port "$PORT"
+        --ray-port "$VLLM_MULTINODE_RAY_PORT"
+        --ray-ready-timeout "$VLLM_MULTINODE_RAY_TIMEOUT"
+        --server-ready-timeout "$VLLM_MULTINODE_SERVER_TIMEOUT"
+        --worker-startup-wait "$VLLM_MULTINODE_WORKER_STARTUP_WAIT"
+      )
+      if [[ -n "$LABELS" ]]; then
+        vllm_multi_args+=(--labels "$LABELS")
+      fi
+      if [[ -n "$SSH_KEY" ]]; then
+        vllm_multi_args+=(--ssh-key "$SSH_KEY")
+      fi
+      if [[ -n "$TP" ]]; then
+        vllm_multi_args+=(--tp "$TP")
+      fi
+      if [[ -n "$VLLM_MULTINODE_NUM_PROMPTS" ]]; then
+        vllm_multi_args+=(--num-prompts "$VLLM_MULTINODE_NUM_PROMPTS")
+      fi
+      if [[ -n "$VLLM_MULTINODE_IMAGE" ]]; then
+        vllm_multi_args+=(--image "$VLLM_MULTINODE_IMAGE")
+      fi
+      if [[ -n "$SOCKET_IFNAME" ]]; then
+        vllm_multi_args+=(--socket-ifname "$SOCKET_IFNAME")
+      fi
+      if [[ -n "$NCCL_IB_HCA" ]]; then
+        vllm_multi_args+=(--nccl-ib-hca "$NCCL_IB_HCA")
+      fi
+      run_step "vllm_serve_multinode_c${vllm_multi_conc}" "${ROOT_DIR}/scripts/repro/run_vllm_serve_multinode_container.sh" "${vllm_multi_args[@]}"
+    done
   else
     echo "WARNING: --run-vllm-multinode requested, but only one host was provided; skipping." >&2
     fail=1
@@ -1235,10 +1259,15 @@ else
 fi
 
 if [[ "${#HOST_ARR[@]}" -gt 1 && -f "${ROOT_DIR}/results/structured/${RUN_ID}_2nodes_nccl.json" ]]; then
-  run_step "plot_nccl_multi_node" python3 "${ROOT_DIR}/analysis/plot_nccl.py" \
-    --input "${ROOT_DIR}/results/structured/${RUN_ID}_2nodes_nccl.json" \
-    --out-dir "${ROOT_DIR}/docs/figures" \
+  nccl_plot_multi_args=(
+    --input "${ROOT_DIR}/results/structured/${RUN_ID}_2nodes_nccl.json"
+    --out-dir "${ROOT_DIR}/docs/figures"
     --run-id "${RUN_ID}_2nodes"
+  )
+  if [[ -f "${ROOT_DIR}/results/structured/${RUN_ID}_node1_nccl.json" ]]; then
+    nccl_plot_multi_args+=(--baseline-input "${ROOT_DIR}/results/structured/${RUN_ID}_node1_nccl.json")
+  fi
+  run_step "plot_nccl_multi_node" python3 "${ROOT_DIR}/analysis/plot_nccl.py" "${nccl_plot_multi_args[@]}"
 fi
 
 if [[ -f "${ROOT_DIR}/results/structured/${RUN_ID}_${PRIMARY_LABEL}_vllm_serve_sweep.csv" ]]; then

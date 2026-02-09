@@ -8,7 +8,7 @@ Usage:
   log_activity.sh decision [--run-id <id>] --note <note>
 
 Notes:
-- Appends a markdown entry to field-report.md (Activity Log section).
+- Appends a markdown entry to field-report.md (Activity Log table section).
 - Writes a raw log to results/raw/activity/<RUN_ID>_activity.log.
 EOF
 }
@@ -59,17 +59,44 @@ mkdir -p "$RAW_DIR"
 
 timestamp="$(date -Iseconds)"
 
+escape_md_cell() {
+  local s="$1"
+  s="${s//$'\n'/ }"
+  s="${s//|/\\|}"
+  printf '%s' "$s"
+}
+
 append_entry() {
-  local entry="$1"
+  local date_cell="$1"
+  local update_cell="$2"
+  local row
+  row="| ${date_cell} | $(escape_md_cell "$update_cell") |"
+
   if ! grep -q "ACTIVITY_LOG_START" "$FIELD_REPORT" || ! grep -q "ACTIVITY_LOG_END" "$FIELD_REPORT"; then
     echo "Activity log markers not found in ${FIELD_REPORT}. Appending at end." >&2
-    printf "\n## Activity Log\n%s\n" "$entry" >> "$FIELD_REPORT"
+    printf "\n## Activity Log\n| Date | Update |\n| --- | --- |\n%s\n" "$row" >> "$FIELD_REPORT"
     return
   fi
+
+  if ! awk '/ACTIVITY_LOG_START/{f=1;next}/ACTIVITY_LOG_END/{f=0}f' "$FIELD_REPORT" | grep -q '^| Date | Update |'; then
+    local tmp_with_header
+    tmp_with_header="$(mktemp)"
+    awk '
+      /ACTIVITY_LOG_START/ {
+        print
+        print "| Date | Update |"
+        print "| --- | --- |"
+        next
+      }
+      { print }
+    ' "$FIELD_REPORT" > "$tmp_with_header"
+    mv "$tmp_with_header" "$FIELD_REPORT"
+  fi
+
   local tmp
   tmp="$(mktemp)"
-  awk -v entry="$entry" '
-    /ACTIVITY_LOG_END/ { print entry; print; next }
+  awk -v row="$row" '
+    /ACTIVITY_LOG_END/ { print row; print; next }
     { print }
   ' "$FIELD_REPORT" > "$tmp"
   mv "$tmp" "$FIELD_REPORT"
@@ -92,8 +119,9 @@ case "$MODE" in
     rc=${PIPESTATUS[0]}
     set -e
     echo "rc=${rc}" >> "$RAW_LOG"
-    entry="- ${timestamp} [cmd] label=${LABEL:-n/a} rc=${rc} cmd=\`$cmd_str\`${NOTE:+ note=\"$NOTE\"}"
-    append_entry "$entry"
+    entry_date="${timestamp%%T*}"
+    entry="[cmd] label=${LABEL:-n/a} rc=${rc} cmd=\`$cmd_str\`${NOTE:+ note=\"$NOTE\"}"
+    append_entry "$entry_date" "$entry"
     exit "$rc"
     ;;
   decision)
@@ -103,8 +131,9 @@ case "$MODE" in
       exit 1
     fi
     echo "== ${timestamp} [decision] note=${NOTE} ==" >> "$RAW_LOG"
-    entry="- ${timestamp} [decision] note=\"$NOTE\""
-    append_entry "$entry"
+    entry_date="${timestamp%%T*}"
+    entry="[decision] note=\"$NOTE\""
+    append_entry "$entry_date" "$entry"
     ;;
   *)
     echo "Unknown mode: $MODE" >&2

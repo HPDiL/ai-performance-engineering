@@ -271,6 +271,13 @@ def _prepend_if_missing(key: str, prefix: str) -> None:
 
 
 def _ensure_ld_preload() -> None:
+    # On aarch64 hosts, preloading distro NCCL often conflicts with the NCCL
+    # bundled in modern CUDA wheels (e.g., undefined symbol ncclWaitSignal).
+    # Prefer wheel-resolved libraries over forcing a system preload.
+    import platform
+    if platform.machine() in ("aarch64", "arm64"):
+        return
+
     os.environ.setdefault("LD_PRELOAD", "")
     preload_entries = [segment for segment in os.environ["LD_PRELOAD"].split(os.pathsep) if segment]
     

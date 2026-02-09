@@ -11,51 +11,69 @@ Last updated: YYYY-MM-DD
 6. [Capability Demonstration (Causal Debugging Workflow)](#capability-demonstration-causal-debugging-workflow)
 7. [Benchmark A (Networking Story): NCCL `all_reduce_perf`](#benchmark-a-networking-story-nccl-all_reduce_perf)
 8. [Benchmark B (Inference Story): vLLM Online Serving](#benchmark-b-inference-story-vllm-online-serving)
-9. [Supporting: nvbandwidth Bundle (Optional, Recommended For GB200)](#supporting-nvbandwidth-bundle-optional-recommended-for-gb200)
+9. [Supporting: nvbandwidth Bundle](#supporting-nvbandwidth-bundle)
 10. [Supporting: Compute Sanity (BF16 GEMM)](#supporting-compute-sanity-bf16-gemm)
 11. [Supporting: Storage (fio)](#supporting-storage-fio)
-12. [Supporting: System Health Suite (Optional)](#supporting-system-health-suite-optional)
-13. [Supporting: GPUDirect RDMA (Optional, Recommended On GB200 Clusters)](#supporting-gpudirect-rdma-optional-recommended-on-gb200-clusters)
-14. [Supporting: Grace/GB200 Memory Topology Probes (Optional)](#supporting-gracegb200-memory-topology-probes-optional)
-15. [Supporting: End-To-End Train Step (Optional)](#supporting-end-to-end-train-step-optional)
-16. [Supporting: Checkpoint I/O (Optional)](#supporting-checkpoint-io-optional)
-17. [Implications For Small AI Teams](#implications-for-small-ai-teams)
-18. [Clustermax Extension Outcomes](#clustermax-extension-outcomes)
-19. [Repository Handoff (GitHub)](#repository-handoff-github)
-20. [Repro Steps](#repro-steps)
-21. [Appendix](#appendix)
-22. [Activity Log](#activity-log)
+12. [Supporting: Health / GDR / NUMA / Train Step / Checkpoint](#supporting-health--gdr--numa--train-step--checkpoint)
+13. [Implications For Small AI Teams](#implications-for-small-ai-teams)
+14. [Clustermax Extension Outcomes](#clustermax-extension-outcomes)
+15. [Reproducibility Package](#reproducibility-package)
+16. [Repository Handoff (GitHub)](#repository-handoff-github)
+17. [Repro Steps](#repro-steps)
+18. [Appendix](#appendix)
+19. [Activity Log](#activity-log)
 
 | Rule | Requirement |
 | --- | --- |
-| Artifact paths | Do not link to `results/raw/` (raw is gitignored and for debugging only). Link only to `results/structured/` and `docs/figures/`. |
-| Benchmark validity | GPU benchmark runs are valid only if clock locking succeeded; include clock-lock artifact links in the report. |
-| Stakeholder handoff | Include GitHub handoff metadata (repo URL, commit/tag, collaborator invite status). |
-| Visual formatting | Use full-size inline visuals under the narrative, keep evidence data links directly below visuals, avoid tiny image thumbnails inside table columns, and link images to image files (not data files). |
+| Artifact paths | Link only to `results/structured/` and `docs/figures/`. Do not link to `results/raw/`. |
+| Benchmark validity | GPU benchmark runs are valid only if clock locking succeeded; include clock-lock artifacts. |
+| Stakeholder handoff | Include repo URL, commit/tag, and collaborator invite/access status. |
+| Visual formatting | Show full-size inline images under each subsection; link each image to itself. |
+| Evidence formatting | Put `Evidence data:` immediately below visuals, one link per line (`<br/>`), no comma-chained lists. |
+| Table preference | Use tables for dense sections (scope, findings, handoff, reproducibility, activity log). |
+| Chart quality gate | Any curve chart should have at least 3 unique x-values; if fewer, label as `canary/sparse` and state why. |
 
 ## TL;DR
-- Hardware summary (nodes, GPUs/node, CPU, RAM, OS)
-- 5-10 bullets: what is weird/new/interesting
-- 2 bullets: what a small AI research team should care about
+| Item | Value |
+| --- | --- |
+| Cluster summary | <nodes, gpus/node, CPU/RAM, OS> |
+| Primary RUN_ID | `<YYYY-MM-DD_provider_story_...>` |
+| Benchmark A headline | <metric + value + short meaning> |
+| Benchmark B headline | <metric + value + short meaning> |
+| Key weird/new finding | <one sentence> |
+| Small-team implication | <one sentence> |
 
 ## Scope + Artifacts
-- Nodes in-scope: <node list>
-- Excluded nodes: <none|...>
-- Primary RUN_ID: <YYYY-MM-DD_provider_story_...>
+| Scope item | Value |
+| --- | --- |
+| Nodes in-scope | <node list> |
+| Excluded nodes | <none or explicit list> |
+| GPU count per node | <value> |
+| Orchestration/runtime notes | <SSH/Slurm/K8s + Docker/Podman/Enroot + egress limits> |
 
-Manifest (file hashes + artifact counts):
-- `results/structured/<RUN_ID>_manifest.json`
-
-Discovery:
-- `results/structured/<RUN_ID>_<label>_meta.json`
-- `results/structured/<RUN_ID>_<label>_nvlink_topology.json` (generated from captured `nvidia-smi topo -m`)
-- `results/structured/<RUN_ID>_<label>_container_runtime.txt` (includes container runtime details + key CVE checks, e.g. CVE-2025-23266)
+| Discovery artifact | Link |
+| --- | --- |
+| Manifest | `results/structured/<RUN_ID>_manifest.json` |
+| Cluster metadata | `results/structured/<RUN_ID>_<label>_meta.json` |
+| NVLink topology | `results/structured/<RUN_ID>_<label>_nvlink_topology.json` |
+| Runtime/CVE evidence | `results/structured/<RUN_ID>_<label>_container_runtime.txt` |
 
 ## Cluster Story (First Contact)
-- Access / launcher UX (SSH, Slurm, K8s)
-- Container story (Docker/Podman/Enroot)
-- Egress constraints (model download reality)
-- Observability (DCGM/IMEX/Fabric Manager)
+| UTC time | Milestone |
+| --- | --- |
+| <hh:mm:ss> | <event> |
+| <hh:mm:ss> | <event> |
+| <hh:mm:ss> | <event> |
+
+Visualization:
+
+<p><a href="docs/figures/<RUN_ID>_cluster_story_dashboard.png"><img src="docs/figures/<RUN_ID>_cluster_story_dashboard.png" alt="Cluster story dashboard" width="920"/></a></p>
+
+Evidence data:
+
+`results/structured/<RUN_ID>_health_suite_..._summary.json`<br/>
+`results/structured/<RUN_ID>_preflight_services.json`<br/>
+`results/structured/<RUN_ID>_node_parity_summary.json`
 
 ## Normal vs Typical Cluster (Operator Reality)
 | Area | Typical small-team expectation | Observed on this cluster | Why it matters |
@@ -67,123 +85,146 @@ Discovery:
 | Observability | <example> | <example> | <impact> |
 
 ## Weird / New / Interesting
-1. <finding>
-2. <finding>
-3. <finding>
+| Finding | What happened | Why it matters |
+| --- | --- | --- |
+| 1 | <summary> | <impact> |
+| 2 | <summary> | <impact> |
+| 3 | <summary> | <impact> |
+
+### Finding 1 Evidence
+Visualization:
+
+<p><a href="docs/figures/<RUN_ID>_finding1.png"><img src="docs/figures/<RUN_ID>_finding1.png" alt="Finding 1 visualization" width="920"/></a></p>
+
+Evidence data:
+
+`results/structured/<RUN_ID>_finding1.json`<br/>
+`results/structured/<RUN_ID>_finding1.csv`
+
+### Finding 2 Evidence
+Visualization:
+
+<p><a href="docs/figures/<RUN_ID>_finding2.png"><img src="docs/figures/<RUN_ID>_finding2.png" alt="Finding 2 visualization" width="920"/></a></p>
+
+Evidence data:
+
+`results/structured/<RUN_ID>_finding2.json`
 
 ## Capability Demonstration (Causal Debugging Workflow)
-- Observation: <what broke and how it was detected>
-- Hypothesis: <candidate root cause>
-- Isolation tests: <what was ruled out>
-- Fix or mitigation: <what changed>
-- Verification: <before/after metric change + artifact links>
+| Phase | Content |
+| --- | --- |
+| Symptom detection | <what broke + where detected> |
+| Hypothesis | <candidate root cause> |
+| Isolation | <tests that ruled alternatives out> |
+| Mitigation | <what changed> |
+| Verification | <before/after metrics + artifacts> |
+
+Visualization:
+
+<p><a href="docs/figures/<RUN_ID>_capability_demo.png"><img src="docs/figures/<RUN_ID>_capability_demo.png" alt="Capability demonstration" width="920"/></a></p>
+
+Evidence data:
+
+`results/structured/<artifact1>.json`<br/>
+`results/structured/<artifact2>.json`
 
 ## Benchmark A (Networking Story): NCCL `all_reduce_perf`
-- Why: explain intra-node vs inter-node scaling
-- Config: GPUs used, message size range, how many nodes
-- Repro commands:
-  - `scripts/run_nccl_all_reduce.sh ...`
-- Artifacts:
-  - `results/structured/<RUN_ID>_nccl.json`
-  - `docs/figures/<RUN_ID>_nccl_bw_vs_msg.png`
-  - `docs/figures/<RUN_ID>_nccl_scaling_efficiency.png`
-- Interpretation bullets: what does the curve say about the network/topology?
+| Field | Content |
+| --- | --- |
+| Why | Explain intra-node vs inter-node behavior and scaling. |
+| Config | <GPUs used, nodes, message size range, warmup/iters> |
+| Repro commands | `scripts/run_nccl_all_reduce.sh ...`<br/>`python3 analysis/plot_nccl.py ...` |
+| Interpretation | <2-4 sentences: topology, oversubscription signals, stability> |
+
+Visualization:
+
+<p><a href="docs/figures/<RUN_ID>_nccl_bw_vs_msg.png"><img src="docs/figures/<RUN_ID>_nccl_bw_vs_msg.png" alt="NCCL bandwidth" width="920"/></a></p>
+<p><a href="docs/figures/<RUN_ID>_nccl_scaling_efficiency.png"><img src="docs/figures/<RUN_ID>_nccl_scaling_efficiency.png" alt="NCCL scaling" width="920"/></a></p>
+
+Evidence data:
+
+`results/structured/<RUN_ID>_nccl.json`
 
 ## Benchmark B (Inference Story): vLLM Online Serving
-- Why: explain throughput vs concurrency and latency knees
-- Config: model, TP, ISL/OSL, concurrency sweep
-- Repro commands:
-  - `scripts/repro/run_vllm_serve_sweep_container.sh ...`
-  - `python3 analysis/plot_vllm_serve_sweep.py ...`
-  - Optional multinode path: `scripts/repro/run_vllm_serve_multinode_container.sh ...` (auto-pins one image digest across leader/worker)
-- Artifacts:
-  - `results/structured/<RUN_ID>_<label>_vllm_serve_sweep.csv`
-  - `results/structured/<RUN_ID>_<label>_vllm_serve_sweep.jsonl`
-  - `results/structured/<RUN_ID>_<label>_vllm_serve_sweep_clock_lock.json`
-  - `docs/figures/<RUN_ID>_<label>_vllm_serve_total_tok_s_vs_concurrency.png`
-  - `docs/figures/<RUN_ID>_<label>_vllm_serve_ttft_vs_concurrency.png`
-  - `docs/figures/<RUN_ID>_<label>_vllm_serve_tpot_vs_concurrency.png`
-  - Optional multinode artifacts:
-    - `results/structured/<RUN_ID>_<leader_label>_vllm_multinode_serve.json`
-    - `results/structured/<RUN_ID>_<leader_label>_vllm_multinode_serve.csv`
-    - `results/structured/<RUN_ID>_<leader_label>_vllm_multinode_serve.jsonl`
-    - `results/structured/<RUN_ID>_<leader_label>_vllm_multinode_leader_clock_lock.json`
-    - `results/structured/<RUN_ID>_<worker_label>_vllm_multinode_worker_clock_lock.json`
-    - `docs/figures/<RUN_ID>_<leader_label>_multinode_vllm_serve_total_tok_s_vs_concurrency.png`
-    - `docs/figures/<RUN_ID>_<leader_label>_multinode_vllm_serve_ttft_vs_concurrency.png`
+| Field | Content |
+| --- | --- |
+| Why | Explain throughput vs concurrency and latency knees. |
+| Config | <model, TP, ISL/OSL, sweep values> |
+| Repro commands | `scripts/repro/run_vllm_serve_sweep_container.sh ...`<br/>`python3 analysis/plot_vllm_serve_sweep.py ...` |
+| Optional multinode path | `scripts/repro/run_vllm_serve_multinode_container.sh ...` |
+| Sparse-data policy | If unique concurrency values < 3, explicitly mark as `canary` and do not claim a full curve conclusion. |
 
-## Supporting: nvbandwidth Bundle (Optional, Recommended For GB200)
-- Why: add direct host-device and GPU-GPU throughput visibility with strict lock evidence.
-- Repro:
-  - `scripts/repro/run_nvbandwidth_bundle.sh --run-id <RUN_ID> --label <label> --suite-dir <suite_root> --image ghcr.io/jordannanos/cmax-compute:latest --quick`
-  - `python3 analysis/plot_nvbandwidth_sums.py --input results/structured/<RUN_ID>_<label>_nvbandwidth_sums.csv --out docs/figures/<RUN_ID>_<label>_nvbandwidth_sums.png`
-- Artifacts:
-  - `results/structured/<RUN_ID>_<label>_nvbandwidth.json`
-  - `results/structured/<RUN_ID>_<label>_nvbandwidth_sums.csv`
-  - `results/structured/<RUN_ID>_<label>_nvbandwidth_clock_lock.json`
-  - `docs/figures/<RUN_ID>_<label>_nvbandwidth_sums.png`
+Visualization:
+
+<p><a href="docs/figures/<RUN_ID>_<label>_vllm_serve_total_tok_s_vs_concurrency.png"><img src="docs/figures/<RUN_ID>_<label>_vllm_serve_total_tok_s_vs_concurrency.png" alt="vLLM throughput" width="920"/></a></p>
+<p><a href="docs/figures/<RUN_ID>_<label>_vllm_serve_ttft_vs_concurrency.png"><img src="docs/figures/<RUN_ID>_<label>_vllm_serve_ttft_vs_concurrency.png" alt="vLLM TTFT" width="920"/></a></p>
+
+Evidence data:
+
+`results/structured/<RUN_ID>_<label>_vllm_serve_sweep.csv`<br/>
+`results/structured/<RUN_ID>_<label>_vllm_serve_sweep.jsonl`
+
+## Supporting: nvbandwidth Bundle
+| Field | Content |
+| --- | --- |
+| Why | Add direct host-device and GPU-GPU throughput evidence with strict lock metadata. |
+| Repro | `scripts/repro/run_nvbandwidth_bundle.sh ...`<br/>`python3 analysis/plot_nvbandwidth_sums.py ...` |
+
+Visualization:
+
+<p><a href="docs/figures/<RUN_ID>_<label>_nvbandwidth_sums.png"><img src="docs/figures/<RUN_ID>_<label>_nvbandwidth_sums.png" alt="nvbandwidth sums" width="920"/></a></p>
+
+Evidence data:
+
+`results/structured/<RUN_ID>_<label>_nvbandwidth.json`<br/>
+`results/structured/<RUN_ID>_<label>_nvbandwidth_sums.csv`<br/>
+`results/structured/<RUN_ID>_<label>_nvbandwidth_clock_lock.json`
 
 ## Supporting: Compute Sanity (BF16 GEMM)
-- Why: catch per-node/per-GPU deltas fast
-- Repro:
-  - `scripts/run_gemm_sanity_all_nodes.sh ...`
-- Artifacts:
-  - `results/structured/<RUN_ID>_<label>_gemm_gpu_sanity.csv`
-  - `docs/figures/<RUN_ID>_<label>_gemm_gpu_sanity.png`
+| Field | Content |
+| --- | --- |
+| Why | Catch per-node/per-GPU throughput deltas quickly. |
+| Repro | `scripts/run_gemm_sanity_all_nodes.sh ...` |
+
+Visualization:
+
+<p><a href="docs/figures/<RUN_ID>_gemm_gpu_sanity.png"><img src="docs/figures/<RUN_ID>_gemm_gpu_sanity.png" alt="GEMM sanity" width="920"/></a></p>
+
+Evidence data:
+
+`results/structured/<RUN_ID>_<label>_gemm_gpu_sanity.csv`
 
 ## Supporting: Storage (fio)
-- Why: baseline sequential MB/s + random IOPS
-- Repro:
-  - `scripts/run_fio_bench.sh ...`
-  - `python3 analysis/plot_fio.py ...`
-- Artifacts:
-  - `results/structured/<RUN_ID>_<label>_fio.json`
-  - `docs/figures/<RUN_ID>_<label>_fio.png`
+| Field | Content |
+| --- | --- |
+| Why | Baseline sequential MB/s + random IOPS and node parity. |
+| Repro | `scripts/run_fio_bench.sh ...`<br/>`python3 analysis/plot_fio.py ...` |
 
-## Supporting: System Health Suite (Optional)
-- `scripts/run_cluster_health_suite.sh ...`
-- `analysis/plot_cluster_health_suite_variance.py ...`
+Visualization:
 
-## Supporting: GPUDirect RDMA (Optional, Recommended On GB200 Clusters)
-- Why: validate host<->NIC<->GPU path and detect GDR-specific regressions.
-- Repro:
-  - `scripts/run_cluster_health_suite.sh --gdr --gdr-gpu 0 --gdr-mem-types 0,1 [--gdr-use-dmabuf] ...`
-- Artifacts:
-  - `results/structured/<RUN_ID>_<label>_cluster_health_suite_summary.json`
-  - `ib_gdr` section in summary payload (tagged by `gdr_gpuX_memY[_dmabuf]`)
+<p><a href="docs/figures/<RUN_ID>_<label>_fio.png"><img src="docs/figures/<RUN_ID>_<label>_fio.png" alt="fio summary" width="920"/></a></p>
 
-## Supporting: Grace/GB200 Memory Topology Probes (Optional)
-- Why: characterize CPU<->GPU C2C behavior and memory-only NUMA domains.
-- Repro:
-  - `scripts/run_c2c_memcpy_bench.sh ...`
-  - `scripts/run_numa_mem_bw_all_nodes.sh ...`
-- Artifacts:
-  - `results/structured/<RUN_ID>_<label>_c2c_memcpy.json`
-  - `docs/figures/<RUN_ID>_<label>_c2c_memcpy_bw.png`
-  - `docs/figures/<RUN_ID>_<label>_c2c_memcpy_lat.png`
-  - `results/structured/<RUN_ID>_<label>_numa_mem_bw.json`
-  - `docs/figures/<RUN_ID>_<label>_numa_mem_bw.png`
+Evidence data:
 
-## Supporting: End-To-End Train Step (Optional)
-- Why: confirm real train-step behavior (compute + comm + optimizer), not just collectives.
-- Repro:
-  - `scripts/run_torchrun_transformer_train_step.sh ...`
-  - `python3 analysis/plot_torchrun_train_step.py ...`
-- Artifacts:
-  - `results/structured/<RUN_ID>_<label>_torchrun_train_step.json`
-  - `docs/figures/<RUN_ID>_<label>_torchrun_train_step.png`
+`results/structured/<RUN_ID>_<label>_fio.json`
 
-## Supporting: Checkpoint I/O (Optional)
-- Why: baseline save/load throughput and fsync overhead for checkpoint workflows.
-- Repro:
-  - `scripts/run_checkpoint_io_all_nodes.sh ...`
-- Artifacts:
-  - `results/structured/<RUN_ID>_<label>_checkpoint_io.json`
-  - `results/structured/<RUN_ID>_<label>_checkpoint_io.csv`
+## Supporting: Health / GDR / NUMA / Train Step / Checkpoint
+| Area | Repro | Evidence data |
+| --- | --- | --- |
+| Health suite | `scripts/run_cluster_health_suite.sh ...` | `results/structured/<RUN_ID>_..._cluster_health_suite_summary.json` |
+| GDR checks | `scripts/run_cluster_health_suite.sh --gdr ...` | `ib_gdr` section in summary payload |
+| C2C/NUMA probes | `scripts/run_c2c_memcpy_bench.sh ...`<br/>`scripts/run_numa_mem_bw_all_nodes.sh ...` | `results/structured/<RUN_ID>_<label>_c2c_memcpy.json`<br/>`results/structured/<RUN_ID>_<label>_numa_mem_bw.json` |
+| Train step | `scripts/run_torchrun_transformer_train_step.sh ...` | `results/structured/<RUN_ID>_<label>_torchrun_train_step.json` |
+| Checkpoint I/O | `scripts/run_checkpoint_io_all_nodes.sh ...` | `results/structured/<RUN_ID>_<label>_checkpoint_io.json` |
 
 ## Implications For Small AI Teams
-- <bullet>
-- <bullet>
+| Focus area | Practical implication |
+| --- | --- |
+| Week-1 setup | <guidance> |
+| Serving operations | <guidance> |
+| Node acceptance | <guidance> |
+| Queue discipline | <guidance> |
+| Observability | <guidance> |
 
 ## Clustermax Extension Outcomes
 | Area | What you implemented/prototyped | Why it should be upstreamed |
@@ -191,25 +232,53 @@ Discovery:
 | <example> | <script/analysis/doc path> | <impact> |
 | <example> | <script/analysis/doc path> | <impact> |
 
+## Reproducibility Package
+| Bundle | Artifact links |
+| --- | --- |
+| Baseline package | `results/structured/<RUN_ID>_manifest.json`<br/>`results/structured/<RUN_ID>_cluster_meta.json`<br/>`results/structured/<RUN_ID>_preflight_services.json`<br/>`results/structured/<RUN_ID>_health_suite_..._summary.json` |
+| Multinode vLLM bundle | `results/structured/<RUN_ID>_<label>_vllm_multinode_serve.json`<br/>`results/structured/<RUN_ID>_<label>_vllm_multinode_serve.csv` |
+| NVLink topology bundle | `results/structured/<RUN_ID>_node1_nvlink_topology.json`<br/>`results/structured/<RUN_ID>_node2_nvlink_topology.json` |
+| nvbandwidth bundle | `results/structured/<RUN_ID>_node1_nvbandwidth.json`<br/>`results/structured/<RUN_ID>_node2_nvbandwidth.json`<br/>`results/structured/<RUN_ID>_node1_nvbandwidth_sums.csv`<br/>`results/structured/<RUN_ID>_node2_nvbandwidth_sums.csv` |
+| fio parity bundle | `results/structured/<RUN_ID>_node1_fio.json`<br/>`results/structured/<RUN_ID>_node2_fio.json` |
+
+Visualization:
+
+<p><a href="docs/figures/<RUN_ID>_node1_nvlink_topology.png"><img src="docs/figures/<RUN_ID>_node1_nvlink_topology.png" alt="Node1 NVLink topology" width="920"/></a></p>
+<p><a href="docs/figures/<RUN_ID>_node2_nvlink_topology.png"><img src="docs/figures/<RUN_ID>_node2_nvlink_topology.png" alt="Node2 NVLink topology" width="920"/></a></p>
+<p><a href="docs/figures/<RUN_ID>_node1_nvbandwidth_sums.png"><img src="docs/figures/<RUN_ID>_node1_nvbandwidth_sums.png" alt="Node1 nvbandwidth sums" width="920"/></a></p>
+<p><a href="docs/figures/<RUN_ID>_node2_nvbandwidth_sums.png"><img src="docs/figures/<RUN_ID>_node2_nvbandwidth_sums.png" alt="Node2 nvbandwidth sums" width="920"/></a></p>
+
+Evidence data:
+
+`results/structured/<RUN_ID>_node1_nvlink_topology.json`<br/>
+`results/structured/<RUN_ID>_node2_nvlink_topology.json`<br/>
+`results/structured/<RUN_ID>_node1_nvbandwidth.json`<br/>
+`results/structured/<RUN_ID>_node2_nvbandwidth.json`
+
 ## Repository Handoff (GitHub)
-- Repo URL: <url>
-- Commit/Tag for review: <commit or tag>
-- Collaborator access (`JordanNanos`) status: <invited|already has access>
+| Field | Value |
+| --- | --- |
+| Repository URL | `<url>` |
+| Commit/Tag for review | `<commit or tag>` |
+| Collaborator access (`JordanNanos`) status | `<invited|already has access>` |
 
 ## Repro Steps
-- One-command baseline repro (portable profile):
-  - `scripts/run_cluster_eval_suite.sh --run-id <RUN_ID> --hosts <h1,h2> --labels <l1,l2> --ssh-key <key> --oob-if <iface> --socket-ifname <iface> --nccl-ib-hca <hcas> --health-suite extended --disable-fp4`
-- Full GB200 repro (FP4 path enabled):
-  - `scripts/run_cluster_eval_suite.sh --run-id <RUN_ID> --hosts <h1,h2> --labels <l1,l2> --ssh-key <key> --oob-if <iface> --socket-ifname <iface> --nccl-ib-hca <hcas> --health-suite extended --fp4-suite-dir <dir> --fp4-image ghcr.io/jordannanos/cmax-compute:latest`
-- Full GB200 repro (all extended checks enabled):
-  - `scripts/run_cluster_eval_suite.sh --run-id <RUN_ID> --hosts <h1,h2> --labels <l1,l2> --ssh-key <key> --oob-if <iface> --socket-ifname <iface> --nccl-ib-hca <hcas> --health-suite extended --health-gdr --health-gdr-gpu 0 --health-gdr-mem-types 0,1 --health-gdr-use-dmabuf --fp4-suite-dir <dir> --fp4-image ghcr.io/jordannanos/cmax-compute:latest --run-c2c --run-numa-mem-bw --run-train-step --train-step-single-node --train-step-multi-node --run-checkpoint-io --enable-mamf --mamf-mode quick --mamf-concurrent --enable-allreduce-stability --allreduce-payload-gib 2.0 --allreduce-iters 200 --allreduce-warmup 20 --enable-allreduce-latency-comp --allreduce-latency-payload-gib 4.0 --allreduce-latency-chunks 1000 --allreduce-latency-iters 5 --allreduce-latency-warmup 1 --enable-allgather-control-plane --allgather-control-iters 2000 --allgather-control-warmup 200 --enable-nccl-algo-comparison --nccl-algos Ring,Tree,NVLS,auto`
-  - Optional multinode vLLM add-on for the suite command: `--run-vllm-multinode --vllm-multinode-concurrency 16 --vllm-multinode-num-prompts 64 --vllm-multinode-ray-port 6379`
-  - If grouped GEMM fails on GB200 with DeepGEMM scaling-factor errors, apply `code/cluster_perf_patches/deepgemm_gb200_grouped_gemm_ue8m0.patch` (see `docs/advanced-runbook.md`).
+| Profile | Command |
+| --- | --- |
+| Portable baseline | `scripts/run_cluster_eval_suite.sh --run-id <RUN_ID> --hosts <h1,h2> --labels <l1,l2> --ssh-key <key> --oob-if <iface> --socket-ifname <iface> --nccl-ib-hca <hcas> --health-suite extended --disable-fp4` |
+| Full GB200 (FP4 enabled) | `scripts/run_cluster_eval_suite.sh --run-id <RUN_ID> --hosts <h1,h2> --labels <l1,l2> --ssh-key <key> --oob-if <iface> --socket-ifname <iface> --nccl-ib-hca <hcas> --health-suite extended --fp4-suite-dir <dir> --fp4-image ghcr.io/jordannanos/cmax-compute:latest` |
+| Multinode vLLM sweep add-on | `--run-vllm-multinode --vllm-multinode-concurrency-range "16 32 64 128" --vllm-multinode-num-prompts <n>` |
 
 ## Appendix
-- Discovery links
-- Any tuning deltas (sysctl, MTU, NCCL env)
+| Topic | Notes |
+| --- | --- |
+| Discovery links | <links> |
+| Tuning deltas | <sysctl/MTU/NCCL env changes> |
+| Historical incident retention | <why retained and what changed decisions> |
 
 ## Activity Log
 <!-- ACTIVITY_LOG_START -->
+| Date | Update |
+| --- | --- |
+| YYYY-MM-DD | <entry> |
 <!-- ACTIVITY_LOG_END -->

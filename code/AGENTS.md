@@ -85,6 +85,8 @@
 - Do not add a dedicated "Visual" table column; place visuals under the narrative section and keep evidence/data links directly below each visual.
 - Image click-through must open the image artifact itself (`docs/figures/...`), not a JSON/CSV/TXT data file.
 - Avoid nested bullet-heavy formatting in visual sections; prefer clean paragraphs, concise tables, and explicit `Data:` lines below images.
+- Render visuals as block elements (use `<p><a href="..."><img .../></a></p>`) so evidence/data lines never wrap to the right of images.
+- Prefer tables over bullets for dense stakeholder sections (TL;DR, recommendations, reproducibility, activity log, historical change logs).
 
 #### Quality Bar (CRITICAL)
 - Taste in what to measure, reproducibility, rigor (multiple runs + warmups + noise notes), systems intuition, communication clarity, and practical empathy.

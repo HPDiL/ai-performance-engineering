@@ -63,6 +63,9 @@ def main() -> int:
             if "comparison" in p.name:
                 continue
             algo = p.stem
+        elif algo.lower() == "comparison":
+            # Skip top-level comparison summary files that do not contain per-size results.
+            continue
 
         with p.open("r", encoding="utf-8") as f:
             data = json.load(f)
