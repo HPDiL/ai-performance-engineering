@@ -198,11 +198,6 @@ build_rsync_ssh() {
 }
 RSYNC_SSH_CMD="$(build_rsync_ssh)"
 
-LOCAL_PARITY_IMAGE_AVAILABLE=0
-if command -v docker >/dev/null 2>&1 && docker image inspect "$HOST_PARITY_IMAGE" >/dev/null 2>&1; then
-  LOCAL_PARITY_IMAGE_AVAILABLE=1
-fi
-
 run_remote() {
   local host="$1"
   shift
@@ -239,7 +234,7 @@ ensure_parity_image_on_host() {
     return 0
   fi
 
-  if ! is_local_host "$host" && [[ "$LOCAL_PARITY_IMAGE_AVAILABLE" -eq 1 ]]; then
+  if ! is_local_host "$host" && command -v docker >/dev/null 2>&1 && docker image inspect "$HOST_PARITY_IMAGE" >/dev/null 2>&1; then
     echo "INFO: host ${host} missing parity image; streaming local cache (${HOST_PARITY_IMAGE})"
     if docker save "$HOST_PARITY_IMAGE" | ssh "${SSH_OPTS[@]}" "${SSH_USER}@${host}" "docker load >/dev/null"; then
       if run_host_cmd "$host" "docker image inspect ${q_parity_image} >/dev/null 2>&1"; then
