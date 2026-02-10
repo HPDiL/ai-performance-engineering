@@ -307,7 +307,7 @@ wait_for_smoke_settle() {
   done
 
   echo "ERROR: smoke settle precheck timed out on host=${host} label=${label}." >&2
-  run_host_cmd "$host" "nvidia-smi --query-gpu=index,utilization.gpu,temperature.gpu,clocks.current.sm,clocks.applications.sm --format=csv,noheader,nounits" >&2 || true
+  run_host_cmd "$host" "nvidia-smi --query-gpu=index,utilization.gpu,temperature.gpu,clocks.current.sm,clocks.applications.graphics --format=csv,noheader,nounits" >&2 || true
   return 1
 }
 
