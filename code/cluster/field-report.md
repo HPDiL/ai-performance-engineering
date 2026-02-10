@@ -8,23 +8,24 @@ Last updated: 2026-02-10. Canonical run: `2026-02-09_fresh_full_suite_e2e_green_
 3. [TL;DR Evidence Anchors](#tldr-evidence-anchors)
 4. [Cluster Story (First Contact)](#cluster-story-first-contact)
 5. [Normal vs Weird Log](#normal-vs-weird-log)
-6. [Benchmark A (Networking Story)](#benchmark-a-networking-story)
-7. [Benchmark B (Inference Story)](#benchmark-b-inference-story)
-8. [Node Parity Snapshot (node1 vs node2)](#node-parity-snapshot-node1-vs-node2)
-9. [Per-Node Deep-Dive Visuals (Restored)](#per-node-deep-dive-visuals-restored)
-10. [NVLink/NVSwitch Topology Snapshot](#nvlinknvswitch-topology-snapshot)
-11. [Dedicated nvbandwidth Snapshot](#dedicated-nvbandwidth-snapshot)
-12. [GB200 Extensions (Enabled in Canonical Run)](#gb200-extensions-enabled-in-canonical-run)
-13. [Required Issues (Explicit)](#required-issues-explicit)
-14. [Root Cause + Fix Mapping](#root-cause--fix-mapping)
-15. [Report Completeness Delta (vs prior condensed revision)](#report-completeness-delta-vs-prior-condensed-revision)
-16. [Gaps, Risks, and Smell Checks](#gaps-risks-and-smell-checks)
-17. [Implications for Small AI Teams](#implications-for-small-ai-teams)
-18. [Stakeholder Recommendations (Prioritized)](#stakeholder-recommendations-prioritized)
-19. [Repro Steps](#repro-steps)
-20. [Reproducibility Package](#reproducibility-package)
-21. [Activity Log](#activity-log)
-22. [Appendix (Coverage vs Case-Study Goals)](#appendix-coverage-vs-case-study-goals)
+6. [Weird / New / Interesting Findings](#weird--new--interesting-findings)
+7. [Benchmark A (Networking Story)](#benchmark-a-networking-story)
+8. [Benchmark B (Inference Story)](#benchmark-b-inference-story)
+9. [Node Parity Snapshot (node1 vs node2)](#node-parity-snapshot-node1-vs-node2)
+10. [Per-Node Deep-Dive Visuals (Restored)](#per-node-deep-dive-visuals-restored)
+11. [NVLink/NVSwitch Topology Snapshot](#nvlinknvswitch-topology-snapshot)
+12. [Dedicated nvbandwidth Snapshot](#dedicated-nvbandwidth-snapshot)
+13. [GB200 Extensions (Enabled in Canonical Run)](#gb200-extensions-enabled-in-canonical-run)
+14. [Required Issues (Explicit)](#required-issues-explicit)
+15. [Root Cause + Fix Mapping](#root-cause--fix-mapping)
+16. [Report Completeness Delta (vs prior condensed revision)](#report-completeness-delta-vs-prior-condensed-revision)
+17. [Gaps, Risks, and Smell Checks](#gaps-risks-and-smell-checks)
+18. [Implications for Small AI Teams](#implications-for-small-ai-teams)
+19. [Stakeholder Recommendations (Prioritized)](#stakeholder-recommendations-prioritized)
+20. [Repro Steps](#repro-steps)
+21. [Reproducibility Package](#reproducibility-package)
+22. [Activity Log](#activity-log)
+23. [Appendix (Coverage vs Case-Study Goals)](#appendix-coverage-vs-case-study-goals)
 
 ## TL;DR
 | Topic | Summary |
@@ -83,11 +84,32 @@ Data: [results/structured/2026-02-09_fresh_full_suite_e2e_green_rootfix_suite_st
 | Area | Normal (canonical) | Weird / notable | Evidence |
 | --- | --- | --- | --- |
 | NCCL all-reduce | Peak `840.56 GB/s`, stable high-band regime | Stability run still shows moderate jitter (`CV=3.49%`, min outliers down to `589.277 GB/s`) | [health summary](results/structured/2026-02-09_fresh_full_suite_e2e_green_rootfix_health_suite_extended_node1node2_cluster_health_suite_summary.json), [allreduce stability](results/structured/2026-02-09_fresh_full_suite_e2e_green_rootfix_allreduce_stability.json) |
+| Service-state gating | `persistenced`/`imex`/`dcgm` are active on both nodes before health/benchmark execution | This remains a hard validity gate; any service-state drift must invalidate runs, not degrade silently | [preflight services](results/structured/2026-02-09_fresh_full_suite_e2e_green_rootfix_preflight_services.json), [health preflight services](results/structured/2026-02-09_fresh_full_suite_e2e_green_rootfix_health_suite_extended_preflight_services.json) |
 | GDR path | `requested=true`, `effective_enabled=true`, tags include `gdr_gpu0_mem0` and `gdr_gpu0_mem0_dmabuf` | Requested mem-type matrix is now intentionally constrained to supported mem type (`0`); historical `cuda_mem_type=1` attempts fail with `no odp MR or dmabuf` in this environment | [health summary](results/structured/2026-02-09_fresh_full_suite_e2e_green_rootfix_health_suite_extended_node1node2_cluster_health_suite_summary.json), [health log](results/raw/2026-02-09_fresh_full_suite_e2e_green_rootfix_suite/health_suite_extended.log) |
 | Single-node serving | Throughput scales to `48,368.629 tok/s` | Tail latency knee is severe at `c=512` (mean TTFT `5,174.169 ms`, p99 `12,834.962 ms`) | [serve sweep csv](results/structured/2026-02-09_fresh_full_suite_e2e_green_rootfix_node1_vllm_serve_sweep.csv) |
 | Multinode serving | Artifact and return codes are clean; status `ok` | Multinode p99 TTFT (`1,422.511 ms`) still materially above low-concurrency single-node levels | [multinode json](results/structured/2026-02-09_fresh_full_suite_e2e_green_rootfix_node1_vllm_multinode_serve.json) |
 | nvbandwidth | Node1 + node2 bundles present, status `ok`, effective runtime `host` | Host path requires CUDA compat libs from parity image because host user-mode stack and nvbandwidth binary were mismatched pre-fix | [node1 nvbandwidth json](results/structured/2026-02-09_fresh_full_suite_e2e_green_rootfix_node1_nvbandwidth.json), [node2 nvbandwidth json](results/structured/2026-02-09_fresh_full_suite_e2e_green_rootfix_node2_nvbandwidth.json) |
 | OOB networking | OOB path stable and measurable | OOB is still `~7.5 Gbps` and should stay control-plane only versus IB data-plane bandwidth | [iperf3 oob](results/structured/2026-02-09_fresh_full_suite_e2e_green_rootfix_iperf3_oob_tcp.json) |
+| Node-level compute parity | Node-level GEMM means remain tight (`node2/node1=0.990x`) | GPU-level straggler spread remains non-trivial (`10.26%` gap-to-best, `11.44%` min-to-max spread) and should be trended | [node parity summary](results/structured/2026-02-09_fresh_full_suite_e2e_green_rootfix_node_parity_summary.json), [node1 gpu0 mamf](results/structured/2026-02-09_fresh_full_suite_e2e_green_rootfix_node1_gpu0_mamf_summary.json), [node1 gpu2 mamf](results/structured/2026-02-09_fresh_full_suite_e2e_green_rootfix_node1_gpu2_mamf_summary.json) |
+| Storage parity | Both node fio artifacts are now captured in canonical package | Random-write asymmetry is still visible (`node2/node1=0.809x`) and should be watched in acceptance checks | [node1 fio](results/structured/2026-02-09_fresh_full_suite_e2e_green_rootfix_node1_fio.json), [node2 fio](results/structured/2026-02-09_fresh_full_suite_e2e_green_rootfix_node2_fio.json) |
+| Launch ergonomics | Time-to-first multi-node signal is fast (~83s from bootstrap start to multi-node NCCL start) | Wall-clock is dominated by serving sweeps and multinode stabilization, so schedule budgeting must account for long poles | [suite steps](results/structured/2026-02-09_fresh_full_suite_e2e_green_rootfix_suite_steps.json) |
+
+## Weird / New / Interesting Findings
+| Finding | What happened in canonical run | Why it matters | Evidence |
+| --- | --- | --- | --- |
+| 1. Service-gated reliability | Preflight captured healthy `persistenced/imex/dcgm` state on both nodes before critical steps. | Prevents hidden-invalid runs and keeps failures explicit at the boundary. | [preflight services](results/structured/2026-02-09_fresh_full_suite_e2e_green_rootfix_preflight_services.json) |
+| 2. GDR is now explicit and constrained | GDR is effective in canonical, but valid mem-type coverage is intentionally constrained to supported `mem_types=0` path. | Prevents false confidence from unsupported modes and keeps the suite fail-fast. | [health summary](results/structured/2026-02-09_fresh_full_suite_e2e_green_rootfix_health_suite_extended_node1node2_cluster_health_suite_summary.json), [health log](results/raw/2026-02-09_fresh_full_suite_e2e_green_rootfix_suite/health_suite_extended.log) |
+| 3. Throughput-latency tradeoff is sharp | Single-node serving reaches max throughput at `c=512`, but TTFT tails degrade heavily. | Requires explicit operating profiles (`latency-safe` vs `throughput`) in production usage. | [serve sweep csv](results/structured/2026-02-09_fresh_full_suite_e2e_green_rootfix_node1_vllm_serve_sweep.csv), [multinode serve json](results/structured/2026-02-09_fresh_full_suite_e2e_green_rootfix_node1_vllm_multinode_serve.json) |
+| 4. nvbandwidth root cause is fixed without runtime fallback | Canonical bundle runs on host runtime with explicit CUDA compat-lib chain and status `ok` on both nodes. | Shows root-cause fix is in the collection path, not a compatibility fallback path. | [node1 nvbandwidth](results/structured/2026-02-09_fresh_full_suite_e2e_green_rootfix_node1_nvbandwidth.json), [node2 nvbandwidth](results/structured/2026-02-09_fresh_full_suite_e2e_green_rootfix_node2_nvbandwidth.json) |
+| 5. Compute parity is good, but per-GPU spread is still notable | Node means are close, while per-GPU MAMF variability remains >10%. | Highlights need for ongoing straggler trending even when node-level means look healthy. | [node parity summary](results/structured/2026-02-09_fresh_full_suite_e2e_green_rootfix_node_parity_summary.json), [mamf summaries](results/structured/2026-02-09_fresh_full_suite_e2e_green_rootfix_node1_gpu0_mamf_summary.json) |
+
+<p><a href="docs/figures/2026-02-09_fresh_full_suite_e2e_green_rootfix_cluster_story_dashboard.png"><img src="docs/figures/2026-02-09_fresh_full_suite_e2e_green_rootfix_cluster_story_dashboard.png" alt="Cluster story timeline and long poles" width="920"/></a></p>
+<p><a href="docs/figures/2026-02-09_fresh_full_suite_e2e_green_rootfix_allreduce_stability.png"><img src="docs/figures/2026-02-09_fresh_full_suite_e2e_green_rootfix_allreduce_stability.png" alt="All-reduce stability (jitter context)" width="920"/></a></p>
+<p><a href="docs/figures/2026-02-09_fresh_full_suite_e2e_green_rootfix_node1_vllm_serve_ttft_vs_concurrency.png"><img src="docs/figures/2026-02-09_fresh_full_suite_e2e_green_rootfix_node1_vllm_serve_ttft_vs_concurrency.png" alt="Single-node vLLM TTFT knee" width="920"/></a></p>
+<p><a href="docs/figures/2026-02-09_fresh_full_suite_e2e_green_rootfix_node1_nvbandwidth_sums.png"><img src="docs/figures/2026-02-09_fresh_full_suite_e2e_green_rootfix_node1_nvbandwidth_sums.png" alt="nvbandwidth sums (root-cause fix path)" width="920"/></a></p>
+<p><a href="docs/figures/2026-02-09_fresh_full_suite_e2e_green_rootfix_mamf_straggler.png"><img src="docs/figures/2026-02-09_fresh_full_suite_e2e_green_rootfix_mamf_straggler.png" alt="MAMF straggler spread" width="920"/></a></p>
+
+Data: [results/structured/2026-02-09_fresh_full_suite_e2e_green_rootfix_suite_steps.json](results/structured/2026-02-09_fresh_full_suite_e2e_green_rootfix_suite_steps.json), [results/structured/2026-02-09_fresh_full_suite_e2e_green_rootfix_allreduce_stability.json](results/structured/2026-02-09_fresh_full_suite_e2e_green_rootfix_allreduce_stability.json), [results/structured/2026-02-09_fresh_full_suite_e2e_green_rootfix_node1_vllm_serve_sweep.csv](results/structured/2026-02-09_fresh_full_suite_e2e_green_rootfix_node1_vllm_serve_sweep.csv), [results/structured/2026-02-09_fresh_full_suite_e2e_green_rootfix_node1_nvbandwidth.json](results/structured/2026-02-09_fresh_full_suite_e2e_green_rootfix_node1_nvbandwidth.json), [results/structured/2026-02-09_fresh_full_suite_e2e_green_rootfix_node2_nvbandwidth.json](results/structured/2026-02-09_fresh_full_suite_e2e_green_rootfix_node2_nvbandwidth.json), [results/structured/2026-02-09_fresh_full_suite_e2e_green_rootfix_node1_gpu0_mamf_summary.json](results/structured/2026-02-09_fresh_full_suite_e2e_green_rootfix_node1_gpu0_mamf_summary.json), [results/structured/2026-02-09_fresh_full_suite_e2e_green_rootfix_node1_gpu2_mamf_summary.json](results/structured/2026-02-09_fresh_full_suite_e2e_green_rootfix_node1_gpu2_mamf_summary.json)
 
 ## Benchmark A (Networking Story)
 | Metric | Value |
@@ -246,8 +268,9 @@ Data: [results/structured/2026-02-09_fresh_full_suite_e2e_green_rootfix_allreduc
 | Area | Prior condensed state | Restored now |
 | --- | --- | --- |
 | Canonical run alignment | Pointed to `2026-02-09_fresh_full_suite_e2e_fixed` with remediation context | Fully synced to `2026-02-09_fresh_full_suite_e2e_green_rootfix` |
-| Benchmark coverage depth | Basic A/B sections only | Restored Normal-vs-Weird, NVLink snapshot, dedicated nvbandwidth, GB200 extensions, completeness delta |
+| Benchmark/report depth | Basic A/B sections only | Restored expanded Normal-vs-Weird operator log, dedicated Weird/New/Interesting findings, NVLink snapshot, dedicated nvbandwidth, GB200 extensions, completeness delta |
 | Visual coverage | Smaller figure set | Canonical report now references `32` canonical figures |
+| Historical incident appendix | Older report included incident-era (non-canonical) artifact links | Superseded incident artifacts were intentionally cleaned; operator lessons were retained and rewritten against canonical evidence in Normal-vs-Weird and Weird/New sections |
 | Required issue handling | Present but tied to older canonical package | Revalidated issue ledger against green canonical artifacts |
 | Suite status clarity | Mixed with remediation notes | Clean `47/47` green suite-step narrative with explicit evidence |
 
