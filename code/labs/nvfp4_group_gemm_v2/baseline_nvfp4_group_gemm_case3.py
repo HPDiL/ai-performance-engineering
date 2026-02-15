@@ -19,6 +19,10 @@ os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_V2_UNROLL_N", "1")
 os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_V2_CLUSTER_DIM_X", "1")
 os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_V2_ENABLE_EXPERIMENTAL_CTA2", "0")
 os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_V2_ENABLE_TMA_MULTICAST", "0")
+os.environ.setdefault(
+    "AISP_NVFP4_GROUP_GEMM_V2_EXT_NAME",
+    "nvfp4_group_gemm_v2_tcgen05_baseline",
+)
 
 from core.harness.benchmark_harness import BaseBenchmark
 from labs.nvfp4_group_gemm_v2.custom_cuda_submission import (

@@ -18,14 +18,20 @@ os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_V2_BLOCK_M", "8")
 os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_V2_BLOCK_N", "32")
 os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_V2_KPACK_TILE", "64")
 os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_V2_UNROLL_N", "2")
-# Optional experiments (disabled by default):
-# - Cluster launch + TMA multicast (share A/SFA across the N tiles of each M tile):
-#     AISP_NVFP4_GROUP_GEMM_V2_CLUSTER_DIM_X=8
-#     AISP_NVFP4_GROUP_GEMM_V2_ENABLE_TMA_MULTICAST=1
-# NOTE: The cta_group::2 / cluster path is still under active bring-up. Enable it explicitly via
-# environment variables when testing correctness/perf, e.g.:
-#   AISP_NVFP4_GROUP_GEMM_V2_CLUSTER_DIM_X=2
-#   AISP_NVFP4_GROUP_GEMM_V2_ENABLE_EXPERIMENTAL_CTA2=1
+
+# Compile-time kernel knobs (require rebuild under a unique AISP_NVFP4_GROUP_GEMM_V2_EXT_NAME).
+os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_V2_UNROLL2_USE_N256_MMA", "1")
+os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_V2_USE_UTCCP_64X128B", "1")
+os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_V2_UTCCP_64X128B_SCHEDULE", "1")
+
+# Cluster launch is a net win even without multicast; keep multicast opt-in for now.
+os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_V2_CLUSTER_DIM_X", "2")
+os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_V2_ENABLE_TMA_MULTICAST", "0")
+
+os.environ.setdefault(
+    "AISP_NVFP4_GROUP_GEMM_V2_EXT_NAME",
+    "nvfp4_group_gemm_v2_tcgen05_opt_n256mma_utccp64_s1",
+)
 
 from core.harness.benchmark_harness import BaseBenchmark
 from labs.nvfp4_group_gemm_v2.custom_cuda_submission import (

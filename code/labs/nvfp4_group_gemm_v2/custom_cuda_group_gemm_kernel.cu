@@ -31,8 +31,32 @@
 #define NVFP4_GROUP_GEMM_V2_USE_UTCCP_64X128B 0
 #endif
 
+#ifndef NVFP4_GROUP_GEMM_V2_UTCCP_64X128B_SCHEDULE
+// 0: legacy bring-up (02_13, src +32, dst seg0/seg1)
+// 1: contiguous pairs (01_23, src +64, dst seg0/seg2)
+// 2: contiguous pairs (02_13, src +64, dst seg0/seg2)
+// 3: legacy bring-up (01_23, src +32, dst seg0/seg1)
+#define NVFP4_GROUP_GEMM_V2_UTCCP_64X128B_SCHEDULE 0
+#endif
+
 #ifndef NVFP4_GROUP_GEMM_V2_UNROLL2_USE_N256_MMA
 #define NVFP4_GROUP_GEMM_V2_UNROLL2_USE_N256_MMA 0
+#endif
+
+#ifndef NVFP4_GROUP_GEMM_V2_N256_SFB_TILE_COL_STRIDE
+#define NVFP4_GROUP_GEMM_V2_N256_SFB_TILE_COL_STRIDE 64
+#endif
+
+#ifndef NVFP4_GROUP_GEMM_V2_N256_EPILOGUE_USE_TILE0
+#define NVFP4_GROUP_GEMM_V2_N256_EPILOGUE_USE_TILE0 0
+#endif
+
+#ifndef NVFP4_GROUP_GEMM_V2_N256_EPILOGUE_COL_OFFSET
+#define NVFP4_GROUP_GEMM_V2_N256_EPILOGUE_COL_OFFSET 0
+#endif
+
+#ifndef NVFP4_GROUP_GEMM_V2_N256_B_DESC_STRIDE_U128
+#define NVFP4_GROUP_GEMM_V2_N256_B_DESC_STRIDE_U128 64
 #endif
 
 #ifndef NVFP4_GROUP_GEMM_V2_USE_UTCCP_128X128B_SF
@@ -793,7 +817,7 @@ static EncodeFn load_cuTensorMapEncodeTiled() {
 
 static void encode_2d_u8_tensor_map_or_throw(
     CUtensorMap* out_desc, EncodeFn encode, void* base, uint64_t width, uint64_t height, uint64_t ld_bytes,
-    uint32_t box_width, uint32_t box_height, CUtensorMapSwizzle swizzle_mode) {
+    uint32_t box_width, uint32_t box_height, CUtensorMapSwizzle swizzle_mode, CUtensorMapL2promotion promotion) {
   constexpr uint32_t rank = 2;
   uint64_t dims[rank] = {width, height};
   uint64_t stride[rank - 1] = {ld_bytes};
@@ -801,7 +825,6 @@ static void encode_2d_u8_tensor_map_or_throw(
   uint32_t elem_stride[rank] = {1, 1};
 
   constexpr auto interleave = CU_TENSOR_MAP_INTERLEAVE_NONE;
-  constexpr auto promotion = CU_TENSOR_MAP_L2_PROMOTION_NONE;
   constexpr auto oob_fill = CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE;
 
   auto fn = encode ? encode : cuTensorMapEncodeTiled;
@@ -814,6 +837,30 @@ static void encode_2d_u8_tensor_map_or_throw(
     cuGetErrorName(res, &err_name);
     TORCH_CHECK(false, "cuTensorMapEncodeTiled failed: ", (err_str ? err_str : "unknown"), " (",
                 (err_name ? err_name : "unknown"), ", ", static_cast<int>(res), ")");
+  }
+}
+
+static CUtensorMapL2promotion parse_tma_l2_promotion_from_env() {
+  const char* env = std::getenv("AISP_NVFP4_GROUP_GEMM_V2_TMA_L2_PROMOTION");
+  if (env == nullptr || env[0] == '\0') {
+    return CU_TENSOR_MAP_L2_PROMOTION_NONE;
+  }
+  const int mode = std::atoi(env);
+  switch (mode) {
+    case 0:
+      return CU_TENSOR_MAP_L2_PROMOTION_NONE;
+    case 1:
+      return CU_TENSOR_MAP_L2_PROMOTION_L2_64B;
+    case 2:
+      return CU_TENSOR_MAP_L2_PROMOTION_L2_128B;
+    case 3:
+      return CU_TENSOR_MAP_L2_PROMOTION_L2_256B;
+    default:
+      TORCH_CHECK(false,
+                  "AISP_NVFP4_GROUP_GEMM_V2_TMA_L2_PROMOTION must be 0..3: "
+                  "0=NONE, 1=L2_64B, 2=L2_128B, 3=L2_256B. Got ",
+                  mode);
+      return CU_TENSOR_MAP_L2_PROMOTION_NONE;  // Unreachable.
   }
 }
 
@@ -845,6 +892,7 @@ static std::pair<torch::Tensor, torch::Tensor> build_ab_tma_descs_cuda(
 
   auto encode = load_cuTensorMapEncodeTiled();
   TORCH_CHECK(encode != nullptr, "cuTensorMapEncodeTiled unavailable on this runtime");
+  const CUtensorMapL2promotion promotion = parse_tma_l2_promotion_from_env();
 
   static_assert(sizeof(CUtensorMap) == 128, "Unexpected CUtensorMap size");
 
@@ -871,12 +919,13 @@ static std::pair<torch::Tensor, torch::Tensor> build_ab_tma_descs_cuda(
     encode_2d_u8_tensor_map_or_throw(&a_descs_host[static_cast<size_t>(i)], encode,
                                      reinterpret_cast<void*>(a_ptrs[i]), static_cast<uint64_t>(k_bytes),
                                      static_cast<uint64_t>(m_padded), static_cast<uint64_t>(k_bytes),
-                                     /*box_width=*/128, /*box_height=*/128, CU_TENSOR_MAP_SWIZZLE_128B);
+                                     /*box_width=*/128, /*box_height=*/128, CU_TENSOR_MAP_SWIZZLE_128B, promotion);
 
     encode_2d_u8_tensor_map_or_throw(&b_descs_host[static_cast<size_t>(i)], encode,
                                      reinterpret_cast<void*>(b_ptrs[i]), static_cast<uint64_t>(k_bytes),
                                      static_cast<uint64_t>(n_padded), static_cast<uint64_t>(k_bytes),
-                                     /*box_width=*/128, /*box_height=*/b_box_height, CU_TENSOR_MAP_SWIZZLE_128B);
+                                     /*box_width=*/128, /*box_height=*/b_box_height, CU_TENSOR_MAP_SWIZZLE_128B,
+                                     promotion);
   }
 
   auto opts = torch::TensorOptions().dtype(torch::kInt64).device(torch::kCUDA);
@@ -923,6 +972,7 @@ static std::pair<torch::Tensor, torch::Tensor> build_scale_tma_descs_cuda(
 
   auto encode = load_cuTensorMapEncodeTiled();
   TORCH_CHECK(encode != nullptr, "cuTensorMapEncodeTiled unavailable on this runtime");
+  const CUtensorMapL2promotion promotion = parse_tma_l2_promotion_from_env();
 
   static_assert(sizeof(CUtensorMap) == 128, "Unexpected CUtensorMap size");
 
@@ -960,7 +1010,8 @@ static std::pair<torch::Tensor, torch::Tensor> build_scale_tma_descs_cuda(
                                      static_cast<uint64_t>(sfRowBytes),
                                      /*box_width=*/sfRowBytes,
                                      /*box_height=*/sfaRowsPerTile,
-                                     CU_TENSOR_MAP_SWIZZLE_NONE);
+                                     CU_TENSOR_MAP_SWIZZLE_NONE,
+                                     promotion);
 
     encode_2d_u8_tensor_map_or_throw(&sfb_descs_host[static_cast<size_t>(i)], encode,
                                      reinterpret_cast<void*>(sfb_ptrs[i]),
@@ -969,7 +1020,8 @@ static std::pair<torch::Tensor, torch::Tensor> build_scale_tma_descs_cuda(
                                      static_cast<uint64_t>(sfRowBytes),
                                      /*box_width=*/sfRowBytes,
                                      /*box_height=*/sfb_box_height,
-                                     CU_TENSOR_MAP_SWIZZLE_NONE);
+                                     CU_TENSOR_MAP_SWIZZLE_NONE,
+                                     promotion);
   }
 
   auto opts = torch::TensorOptions().dtype(torch::kInt64).device(torch::kCUDA);
@@ -1294,9 +1346,10 @@ __global__ void nvfp4_group_gemm_v2_tcgen05_kernel(
       }
       desc_b_base[stage][u].start_address_ = static_cast<uint16_t>(sB_addr >> 4);
       desc_b_base[stage][u].leading_byte_offset_ = 1;
-      // Keep the canonical SW128 major-K stride used by the known-correct 1SM path. (We will
-      // transliterate the exact CUTLASS descriptor builder once CTA2 semantics are validated.)
-      desc_b_base[stage][u].stride_byte_offset_ = 64;
+      // Major-K descriptor stride is in units of uint128 (4 LSB dropped).
+      // Keep N128 fixed and expose an explicit N256 tuning knob.
+      desc_b_base[stage][u].stride_byte_offset_ =
+          USE_N256_MMA ? static_cast<uint16_t>(NVFP4_GROUP_GEMM_V2_N256_B_DESC_STRIDE_U128) : 64;
 
       const uint32_t sSFB_addr = tcgen05::cast_smem_ptr_to_uint(&sSFB[stage][u][0][0]);
       desc_sfb[stage][u].version_ = 1;
@@ -1316,8 +1369,9 @@ __global__ void nvfp4_group_gemm_v2_tcgen05_kernel(
           } else {
             const uint32_t sB_unroll2_base = tcgen05::cast_smem_ptr_to_uint(&sB[stage][0][0][0]);
             const uint32_t sSFB_unroll2_base = tcgen05::cast_smem_ptr_to_uint(&sSFB[stage][0][0][0]);
-            const uint32_t b_row_offset_bytes =
-                sw128_major_k_row_offset_bytes(static_cast<int>(kSFBUnroll2BRowOffsetRows), /*stride_u128=*/64u);
+            const uint32_t b_row_offset_bytes = sw128_major_k_row_offset_bytes(
+                static_cast<int>(kSFBUnroll2BRowOffsetRows),
+                USE_N256_MMA ? static_cast<uint32_t>(NVFP4_GROUP_GEMM_V2_N256_B_DESC_STRIDE_U128) : 64u);
             desc_b_base[stage][u].start_address_ = static_cast<uint16_t>((sB_unroll2_base + b_row_offset_bytes) >> 4u);
             desc_sfb[stage][u].start_address_ = static_cast<uint16_t>((sSFB_unroll2_base >> 4u) + kSFBUnroll2RowOffsetRows);
           }
@@ -1414,8 +1468,10 @@ __global__ void nvfp4_group_gemm_v2_tcgen05_kernel(
   }
 #pragma unroll
   for (int u = 0; u < UnrollN; ++u) {
+    constexpr uint32_t kSfbTileColStride =
+        USE_N256_MMA ? static_cast<uint32_t>(NVFP4_GROUP_GEMM_V2_N256_SFB_TILE_COL_STRIDE) : SF_COLS_PER_TILE;
     const uint32_t tmem_sfb_base_u =
-        tcgen05::tmem_addr_add(tmem_sfb_base, /*dp_add=*/0u, /*col_add=*/static_cast<uint32_t>(u) * SF_COLS_PER_TILE);
+        tcgen05::tmem_addr_add(tmem_sfb_base, /*dp_add=*/0u, /*col_add=*/static_cast<uint32_t>(u) * kSfbTileColStride);
 #pragma unroll
     for (int seg = 0; seg < 4; ++seg) {
       tmem_sfb_ptrs[u * 4 + seg] = tcgen05::tmem_addr_add(
@@ -1515,13 +1571,23 @@ __global__ void nvfp4_group_gemm_v2_tcgen05_kernel(
     //   seg0 -> tmem_ptrs[0], seg1 -> tmem_ptrs[1], seg2 -> tmem_ptrs[2], seg3 -> tmem_ptrs[3].
     //
     // `tcgen05.cp.*.64x128b.*` operates on 64 rows, so issue it twice.
-    //
-    // Empirically, the SM100 UTCCP `::02_13` variant matches CUTLASS's tmem_sf_frg segment placement:
-    // it covers segments (0,2) and (1,3) with two ops when the source descriptor is advanced by +32 rows.
-    constexpr int SF_COPY_64x128B_DESC_STEP = 32;  // 32 * 16B = 512B = 1 segment.
+    constexpr int kDescStep32 = 32;  // 32 * 16B = 512B = 1 segment.
+    constexpr int kDescStep64 = 64;  // 64 * 16B = 1024B = 2 segments.
+#if NVFP4_GROUP_GEMM_V2_UTCCP_64X128B_SCHEDULE == 0
     tcgen05::utccp_cp_64x128b_warpx2_02_13<CtaGroup>(src_desc_base, tmem_ptrs[0]);
-    tcgen05::utccp_cp_64x128b_warpx2_02_13<CtaGroup>(src_desc_base + static_cast<uint64_t>(SF_COPY_64x128B_DESC_STEP),
-                                                     tmem_ptrs[1]);
+    tcgen05::utccp_cp_64x128b_warpx2_02_13<CtaGroup>(src_desc_base + static_cast<uint64_t>(kDescStep32), tmem_ptrs[1]);
+#elif NVFP4_GROUP_GEMM_V2_UTCCP_64X128B_SCHEDULE == 1
+    tcgen05::utccp_cp_64x128b_warpx2_01_23<CtaGroup>(src_desc_base, tmem_ptrs[0]);
+    tcgen05::utccp_cp_64x128b_warpx2_01_23<CtaGroup>(src_desc_base + static_cast<uint64_t>(kDescStep64), tmem_ptrs[2]);
+#elif NVFP4_GROUP_GEMM_V2_UTCCP_64X128B_SCHEDULE == 2
+    tcgen05::utccp_cp_64x128b_warpx2_02_13<CtaGroup>(src_desc_base, tmem_ptrs[0]);
+    tcgen05::utccp_cp_64x128b_warpx2_02_13<CtaGroup>(src_desc_base + static_cast<uint64_t>(kDescStep64), tmem_ptrs[2]);
+#elif NVFP4_GROUP_GEMM_V2_UTCCP_64X128B_SCHEDULE == 3
+    tcgen05::utccp_cp_64x128b_warpx2_01_23<CtaGroup>(src_desc_base, tmem_ptrs[0]);
+    tcgen05::utccp_cp_64x128b_warpx2_01_23<CtaGroup>(src_desc_base + static_cast<uint64_t>(kDescStep32), tmem_ptrs[1]);
+#else
+#error "Unsupported NVFP4_GROUP_GEMM_V2_UTCCP_64X128B_SCHEDULE"
+#endif
 #else
     constexpr int SF_COPY_32x128B_DESC_STEP = 32;  // 32 * 16B = 512B per segment.
     for (int seg = 0; seg < 4; ++seg) {
@@ -1866,57 +1932,54 @@ __global__ void nvfp4_group_gemm_v2_tcgen05_kernel(
           auto tok0 = issue_tma_tile(/*stage=*/0, k_byte, sfa_row_offset, sfb_row_offset);
           wait_tma_tile_warp0(/*stage=*/0, tok0);
 
-          if constexpr (DEBUG_STAGE == 2) {
-            break;
-          }
+		          if constexpr (DEBUG_STAGE == 2) {
+		            break;
+		          }
 
-          if (lane == 0) {
-            const uint64_t desc_sfa_base = static_cast<uint64_t>(desc_sfa[0]) + cta2_desc_sfa_row_offset;
-            copy_scale_fragments(desc_sfa_base, tmem_sfa_ptrs, /*is_sfb=*/false);
-            for (int u = 0; u < UnrollN; ++u) {
-              if ((tile_n + u) >= n_tiles_group) {
-                continue;
-              }
-              const uint64_t desc_sfb_base = static_cast<uint64_t>(desc_sfb[0][u]);
-              const uint32_t* tmem_sfb_ptrs_u = tmem_sfb_ptrs + u * 4;
-              copy_scale_fragments(desc_sfb_base, tmem_sfb_ptrs_u, /*is_sfb=*/true);
-            }
-          }
-          // See note above: avoid globally fencing TMEM stores after UTCCP scale copies.
+		          if (lane == 0) {
+		            const uint64_t desc_sfa_base = static_cast<uint64_t>(desc_sfa[0]) + cta2_desc_sfa_row_offset;
+		            copy_scale_fragments(desc_sfa_base, tmem_sfa_ptrs, /*is_sfb=*/false);
+		            for (int u = 0; u < UnrollN; ++u) {
+		              if ((tile_n + u) >= n_tiles_group) {
+	                continue;
+	              }
+	              const uint64_t desc_sfb_base = static_cast<uint64_t>(desc_sfb[0][u]);
+		              const uint32_t* tmem_sfb_ptrs_u = tmem_sfb_ptrs + u * 4;
+		              copy_scale_fragments(desc_sfb_base, tmem_sfb_ptrs_u, /*is_sfb=*/true);
+		            }
+		            // See note above: avoid globally fencing TMEM stores after UTCCP scale copies.
+		          }
 
-          if constexpr (DEBUG_STAGE == 3) {
-            break;
-          }
+		          if constexpr (DEBUG_STAGE == 3) {
+		            break;
+		          }
 
-          if (lane == 0) {
-#pragma unroll
-            for (int seg = 0; seg < 4; ++seg) {
-              const uint64_t desc_a =
-                  static_cast<uint64_t>(desc_a_base[0]) + cta2_desc_a_row_offset +
-                  static_cast<uint64_t>(seg * (K_SEG_BYTES >> 4));
-              const uint32_t accumulate = (k_byte == 0 && seg == 0) ? 0u : 1u;
-              const uint64_t desc_b_base_u0 =
-                  static_cast<uint64_t>(desc_b_base[0][0]) + cta2_desc_b_row_offset +
-                  static_cast<uint64_t>(seg * (K_SEG_BYTES >> 4));
-              tcgen05::mma_mxf4nvf4_block16<CtaGroup>(
-                  desc_a, desc_b_base_u0, tmem_c_tiles[0], accumulate, idesc_hi_seg[0][seg], tmem_sfa_seg[seg],
-                  tmem_sfb_seg[0][seg]);
-              if constexpr (UnrollN == 2 && CtaGroup == 1 && !USE_N256_MMA) {
-                if ((tile_n + 1) < n_tiles_group) {
-                  const uint64_t desc_b_base_u1 =
-                      static_cast<uint64_t>(desc_b_base[0][1]) + cta2_desc_b_row_offset +
-                      static_cast<uint64_t>(seg * (K_SEG_BYTES >> 4));
-                  tcgen05::mma_mxf4nvf4_block16<CtaGroup>(
-                      desc_a, desc_b_base_u1, tmem_c_tiles[1], accumulate, idesc_hi_seg[1][seg], tmem_sfa_seg[seg],
-                      tmem_sfb_seg[1][seg]);
-                }
-              }
-            }
-          }
+		          if (lane == 0) {
+		            const int mma_unroll_n = USE_N256_MMA ? 1 : UnrollN;
+		#pragma unroll
+		            for (int seg = 0; seg < 4; ++seg) {
+		              const uint64_t desc_a =
+		                  static_cast<uint64_t>(desc_a_base[0]) + cta2_desc_a_row_offset +
+		                  static_cast<uint64_t>(seg * (K_SEG_BYTES >> 4));
+		              const uint32_t accumulate = (k_byte == 0 && seg == 0) ? 0u : 1u;
+		#pragma unroll
+		              for (int u = 0; u < mma_unroll_n; ++u) {
+		                if ((tile_n + u) >= n_tiles_group) {
+		                  continue;
+		                }
+		                const uint64_t desc_b =
+		                    static_cast<uint64_t>(desc_b_base[0][u]) + cta2_desc_b_row_offset +
+		                    static_cast<uint64_t>(seg * (K_SEG_BYTES >> 4));
+		                tcgen05::mma_mxf4nvf4_block16<CtaGroup>(
+		                    desc_a, desc_b, tmem_c_tiles[u], accumulate, idesc_hi_seg[u][seg], tmem_sfa_seg[seg],
+		                    tmem_sfb_seg[u][seg]);
+		              }
+		            }
+		          }
 
-          if constexpr (DEBUG_STAGE == 4) {
-            break;
-          }
+		          if constexpr (DEBUG_STAGE == 4) {
+		            break;
+		          }
         }
       }
     } else {
@@ -1954,57 +2017,52 @@ __global__ void nvfp4_group_gemm_v2_tcgen05_kernel(
                                                 ? ((next_tile * n_tiles_tma + tile_n) * SFB_ROWS)
                                                 : ((tile_n * k_tiles_total + next_tile) * SFB_ROWS);
             tok_next = issue_tma_tile(stage_next, next_k_byte, sfa_row_offset_next, sfb_row_offset_next);
-          }
+	          }
 
-          // Copy scale factors from shared memory -> TMEM.
-          if (lane == 0) {
-            const uint64_t desc_sfa_base = static_cast<uint64_t>(desc_sfa[stage_cur]) + cta2_desc_sfa_row_offset;
-            copy_scale_fragments(desc_sfa_base, tmem_sfa_ptrs, /*is_sfb=*/false);
-            for (int u = 0; u < UnrollN; ++u) {
-              if ((tile_n + u) >= n_tiles_group) {
-                continue;
-              }
-              const uint64_t desc_sfb_base = static_cast<uint64_t>(desc_sfb[stage_cur][u]);
-              const uint32_t* tmem_sfb_ptrs_u = tmem_sfb_ptrs + u * 4;
-              copy_scale_fragments(desc_sfb_base, tmem_sfb_ptrs_u, /*is_sfb=*/true);
-            }
-          }
-          // See note above: avoid globally fencing TMEM stores after UTCCP scale copies.
+		          if (lane == 0) {
+		            const uint64_t desc_sfa_base = static_cast<uint64_t>(desc_sfa[stage_cur]) + cta2_desc_sfa_row_offset;
+		            copy_scale_fragments(desc_sfa_base, tmem_sfa_ptrs, /*is_sfb=*/false);
+		            for (int u = 0; u < UnrollN; ++u) {
+		              if ((tile_n + u) >= n_tiles_group) {
+	                continue;
+	              }
+	              const uint64_t desc_sfb_base = static_cast<uint64_t>(desc_sfb[stage_cur][u]);
+		              const uint32_t* tmem_sfb_ptrs_u = tmem_sfb_ptrs + u * 4;
+		              copy_scale_fragments(desc_sfb_base, tmem_sfb_ptrs_u, /*is_sfb=*/true);
+		            }
+		            // See note above: avoid globally fencing TMEM stores after UTCCP scale copies.
+		          }
 
-          if constexpr (DEBUG_STAGE == 3) {
-            break;
-          }
+		          if constexpr (DEBUG_STAGE == 3) {
+		            break;
+		          }
 
-          // Issue the 4 segment MMAs (K=256 => 4 x K=64 segments).
-          if (lane == 0) {
-#pragma unroll
-            for (int seg = 0; seg < 4; ++seg) {
-              const uint64_t desc_a =
-                  static_cast<uint64_t>(desc_a_base[stage_cur]) + cta2_desc_a_row_offset +
-                  static_cast<uint64_t>(seg * (K_SEG_BYTES >> 4));
-              const uint32_t accumulate = (k_byte == 0 && seg == 0) ? 0u : 1u;
-              const uint64_t desc_b_base_u0 =
-                  static_cast<uint64_t>(desc_b_base[stage_cur][0]) + cta2_desc_b_row_offset +
-                  static_cast<uint64_t>(seg * (K_SEG_BYTES >> 4));
-              tcgen05::mma_mxf4nvf4_block16<CtaGroup>(
-                  desc_a, desc_b_base_u0, tmem_c_tiles[0], accumulate, idesc_hi_seg[0][seg], tmem_sfa_seg[seg],
-                  tmem_sfb_seg[0][seg]);
-              if constexpr (UnrollN == 2 && CtaGroup == 1 && !USE_N256_MMA) {
-                if ((tile_n + 1) < n_tiles_group) {
-                  const uint64_t desc_b_base_u1 =
-                      static_cast<uint64_t>(desc_b_base[stage_cur][1]) + cta2_desc_b_row_offset +
-                      static_cast<uint64_t>(seg * (K_SEG_BYTES >> 4));
-                  tcgen05::mma_mxf4nvf4_block16<CtaGroup>(
-                      desc_a, desc_b_base_u1, tmem_c_tiles[1], accumulate, idesc_hi_seg[1][seg], tmem_sfa_seg[seg],
-                      tmem_sfb_seg[1][seg]);
-                }
-              }
-            }
-          }
+		          if (lane == 0) {
+		            const int mma_unroll_n = USE_N256_MMA ? 1 : UnrollN;
+		#pragma unroll
+		            for (int seg = 0; seg < 4; ++seg) {
+		              const uint64_t desc_a =
+		                  static_cast<uint64_t>(desc_a_base[stage_cur]) + cta2_desc_a_row_offset +
+		                  static_cast<uint64_t>(seg * (K_SEG_BYTES >> 4));
+		              const uint32_t accumulate = (k_byte == 0 && seg == 0) ? 0u : 1u;
+		#pragma unroll
+		              for (int u = 0; u < mma_unroll_n; ++u) {
+		                if ((tile_n + u) >= n_tiles_group) {
+		                  continue;
+		                }
+		                const uint64_t desc_b =
+		                    static_cast<uint64_t>(desc_b_base[stage_cur][u]) + cta2_desc_b_row_offset +
+		                    static_cast<uint64_t>(seg * (K_SEG_BYTES >> 4));
+		                tcgen05::mma_mxf4nvf4_block16<CtaGroup>(
+		                    desc_a, desc_b, tmem_c_tiles[u], accumulate, idesc_hi_seg[u][seg], tmem_sfa_seg[seg],
+		                    tmem_sfb_seg[u][seg]);
+		              }
+		            }
+		          }
 
-          if constexpr (DEBUG_STAGE == 4) {
-            break;
-          }
+	          if constexpr (DEBUG_STAGE == 4) {
+	            break;
+	          }
 
           // Ensure the next stage is resident in shared memory before the loop advances.
           if (has_next) {
@@ -2170,13 +2228,17 @@ __global__ void nvfp4_group_gemm_v2_tcgen05_kernel(
       if ((tile_n + u) >= n_tiles_group) {
         continue;
       }
+      constexpr bool kN256OddUsesTile0 = (NVFP4_GROUP_GEMM_V2_N256_EPILOGUE_USE_TILE0 != 0);
+      constexpr uint32_t kN256OddColOffset = static_cast<uint32_t>(NVFP4_GROUP_GEMM_V2_N256_EPILOGUE_COL_OFFSET);
+      const uint32_t tmem_c_tile_u = (USE_N256_MMA && u == 1 && kN256OddUsesTile0) ? tmem_c_tiles[0] : tmem_c_tiles[u];
+      const uint32_t tmem_col_offset_u = (USE_N256_MMA && u == 1) ? kN256OddColOffset : 0u;
       const int n_offset_u = n_offset + u * TILE_N;
       const bool n_tile_full = (n_offset_u + TILE_N) <= n_size;
       if (row_full && n_tile_full) {
         const size_t out_base = base + static_cast<size_t>(n_offset_u);
         for (int n_base = 0; n_base < TILE_N; n_base += 8) {
           const uint32_t col_lane = static_cast<uint32_t>(n_base);
-          const uint32_t addr = tcgen05::tmem_addr_add(tmem_c_tiles[u], dp_lane, col_lane);
+          const uint32_t addr = tcgen05::tmem_addr_add(tmem_c_tile_u, dp_lane, tmem_col_offset_u + col_lane);
           uint32_t v0, v1, v2, v3, v4, v5, v6, v7;
           tcgen05::tmem_ld_32dp32b_x8(addr, v0, v1, v2, v3, v4, v5, v6, v7);
           __half2* out_h2 = reinterpret_cast<__half2*>(c_out + out_base + static_cast<size_t>(n_base));
@@ -2196,7 +2258,7 @@ __global__ void nvfp4_group_gemm_v2_tcgen05_kernel(
       } else {
         for (int n_base = 0; n_base < TILE_N; n_base += 8) {
           const uint32_t col_lane = static_cast<uint32_t>(n_base);
-          const uint32_t addr = tcgen05::tmem_addr_add(tmem_c_tiles[u], dp_lane, col_lane);
+          const uint32_t addr = tcgen05::tmem_addr_add(tmem_c_tile_u, dp_lane, tmem_col_offset_u + col_lane);
           uint32_t v0, v1, v2, v3, v4, v5, v6, v7;
           tcgen05::tmem_ld_32dp32b_x8(addr, v0, v1, v2, v3, v4, v5, v6, v7);
 

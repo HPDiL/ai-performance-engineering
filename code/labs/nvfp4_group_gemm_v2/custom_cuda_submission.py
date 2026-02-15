@@ -93,6 +93,11 @@ def load_v2_custom_cuda_nvfp4_group_gemm(*, verbose: bool = False) -> object:
         extra_cuda_cflags.append(
             f"-DNVFP4_GROUP_GEMM_V2_USE_UTCCP_64X128B={int(use_utccp_64x128b)}"
         )
+    utccp_64x128b_schedule = os.getenv("AISP_NVFP4_GROUP_GEMM_V2_UTCCP_64X128B_SCHEDULE")
+    if utccp_64x128b_schedule is not None and utccp_64x128b_schedule.strip() != "":
+        extra_cuda_cflags.append(
+            f"-DNVFP4_GROUP_GEMM_V2_UTCCP_64X128B_SCHEDULE={int(utccp_64x128b_schedule)}"
+        )
     use_utccp_128x128b_sf = os.getenv("AISP_NVFP4_GROUP_GEMM_V2_USE_UTCCP_128X128B_SF")
     if use_utccp_128x128b_sf is not None and use_utccp_128x128b_sf.strip() != "":
         extra_cuda_cflags.append(
@@ -102,6 +107,26 @@ def load_v2_custom_cuda_nvfp4_group_gemm(*, verbose: bool = False) -> object:
     if unroll2_use_n256_mma is not None and unroll2_use_n256_mma.strip() != "":
         extra_cuda_cflags.append(
             f"-DNVFP4_GROUP_GEMM_V2_UNROLL2_USE_N256_MMA={int(unroll2_use_n256_mma)}"
+        )
+    n256_sfb_tile_col_stride = os.getenv("AISP_NVFP4_GROUP_GEMM_V2_N256_SFB_TILE_COL_STRIDE")
+    if n256_sfb_tile_col_stride is not None and n256_sfb_tile_col_stride.strip() != "":
+        extra_cuda_cflags.append(
+            f"-DNVFP4_GROUP_GEMM_V2_N256_SFB_TILE_COL_STRIDE={int(n256_sfb_tile_col_stride)}"
+        )
+    n256_epi_use_tile0 = os.getenv("AISP_NVFP4_GROUP_GEMM_V2_N256_EPILOGUE_USE_TILE0")
+    if n256_epi_use_tile0 is not None and n256_epi_use_tile0.strip() != "":
+        extra_cuda_cflags.append(
+            f"-DNVFP4_GROUP_GEMM_V2_N256_EPILOGUE_USE_TILE0={int(n256_epi_use_tile0)}"
+        )
+    n256_epi_col_offset = os.getenv("AISP_NVFP4_GROUP_GEMM_V2_N256_EPILOGUE_COL_OFFSET")
+    if n256_epi_col_offset is not None and n256_epi_col_offset.strip() != "":
+        extra_cuda_cflags.append(
+            f"-DNVFP4_GROUP_GEMM_V2_N256_EPILOGUE_COL_OFFSET={int(n256_epi_col_offset)}"
+        )
+    n256_b_desc_stride_u128 = os.getenv("AISP_NVFP4_GROUP_GEMM_V2_N256_B_DESC_STRIDE_U128")
+    if n256_b_desc_stride_u128 is not None and n256_b_desc_stride_u128.strip() != "":
+        extra_cuda_cflags.append(
+            f"-DNVFP4_GROUP_GEMM_V2_N256_B_DESC_STRIDE_U128={int(n256_b_desc_stride_u128)}"
         )
     debug_stage = os.getenv("AISP_NVFP4_GROUP_GEMM_V2_DEBUG_STAGE")
     if debug_stage is not None and debug_stage.strip() != "":
@@ -609,6 +634,12 @@ def custom_kernel_v2_custom_cuda_tcgen05(data: tuple[Any, ...]) -> output_t:
       - `AISP_NVFP4_GROUP_GEMM_V2_CLUSTER_DIM_X=2` enables cluster launch via cudaLaunchKernelEx.
       - `AISP_NVFP4_GROUP_GEMM_V2_ENABLE_EXPERIMENTAL_CTA2=1` (with cluster_dim_x=2) enables the
         in-progress cta_group::2 path; default cluster mode remains correctness-safe cta_group::1.
+      - `AISP_NVFP4_GROUP_GEMM_V2_TMA_L2_PROMOTION` controls TMA L2 promotion policy for all A/B/SF
+        tensor maps (setup-time descriptor encoding):
+          0 = NONE (default),
+          1 = L2_64B,
+          2 = L2_128B,
+          3 = L2_256B.
       - Experimental cta2 mapping overrides (rows): `AISP_NVFP4_GROUP_GEMM_V2_CTA2_A_ROW_OFFSET`,
         `AISP_NVFP4_GROUP_GEMM_V2_CTA2_B_ROW_OFFSET`, `AISP_NVFP4_GROUP_GEMM_V2_CTA2_SFA_ROW_OFFSET`,
         `AISP_NVFP4_GROUP_GEMM_V2_CTA2_EPILOGUE_ROW_BASE`.

@@ -19,6 +19,20 @@ os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_V2_BLOCK_N", "32")
 os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_V2_KPACK_TILE", "64")
 os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_V2_UNROLL_N", "2")
 
+# Compile-time kernel knobs (require rebuild under a unique AISP_NVFP4_GROUP_GEMM_V2_EXT_NAME).
+os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_V2_UNROLL2_USE_N256_MMA", "1")
+os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_V2_USE_UTCCP_64X128B", "1")
+os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_V2_UTCCP_64X128B_SCHEDULE", "1")
+
+# Cluster launch is a net win even without multicast; keep multicast opt-in for now.
+os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_V2_CLUSTER_DIM_X", "2")
+os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_V2_ENABLE_TMA_MULTICAST", "0")
+
+os.environ.setdefault(
+    "AISP_NVFP4_GROUP_GEMM_V2_EXT_NAME",
+    "nvfp4_group_gemm_v2_tcgen05_opt_n256mma_utccp64_s1",
+)
+
 from core.harness.benchmark_harness import BaseBenchmark
 from labs.nvfp4_group_gemm_v2.custom_cuda_submission import (
     custom_kernel_v2_custom_cuda_tcgen05,
