@@ -88,6 +88,24 @@ def load_v2_custom_cuda_nvfp4_group_gemm(*, verbose: bool = False) -> object:
     tmem_columns = os.getenv("AISP_NVFP4_GROUP_GEMM_V2_TMEM_COLUMNS")
     if tmem_columns is not None and tmem_columns.strip() != "":
         extra_cuda_cflags.append(f"-DNVFP4_GROUP_GEMM_V2_TMEM_COLUMNS={int(tmem_columns)}")
+    use_utccp_64x128b = os.getenv("AISP_NVFP4_GROUP_GEMM_V2_USE_UTCCP_64X128B")
+    if use_utccp_64x128b is not None and use_utccp_64x128b.strip() != "":
+        extra_cuda_cflags.append(
+            f"-DNVFP4_GROUP_GEMM_V2_USE_UTCCP_64X128B={int(use_utccp_64x128b)}"
+        )
+    use_utccp_128x128b_sf = os.getenv("AISP_NVFP4_GROUP_GEMM_V2_USE_UTCCP_128X128B_SF")
+    if use_utccp_128x128b_sf is not None and use_utccp_128x128b_sf.strip() != "":
+        extra_cuda_cflags.append(
+            f"-DNVFP4_GROUP_GEMM_V2_USE_UTCCP_128X128B_SF={int(use_utccp_128x128b_sf)}"
+        )
+    unroll2_use_n256_mma = os.getenv("AISP_NVFP4_GROUP_GEMM_V2_UNROLL2_USE_N256_MMA")
+    if unroll2_use_n256_mma is not None and unroll2_use_n256_mma.strip() != "":
+        extra_cuda_cflags.append(
+            f"-DNVFP4_GROUP_GEMM_V2_UNROLL2_USE_N256_MMA={int(unroll2_use_n256_mma)}"
+        )
+    debug_stage = os.getenv("AISP_NVFP4_GROUP_GEMM_V2_DEBUG_STAGE")
+    if debug_stage is not None and debug_stage.strip() != "":
+        extra_cuda_cflags.append(f"-DNVFP4_GROUP_GEMM_V2_DEBUG_STAGE={int(debug_stage)}")
     _EXT = load_cuda_extension(
         extension_name=_EXT_NAME,
         cuda_source_file=str(source),
@@ -375,6 +393,11 @@ def prepare_v2_custom_cuda_tcgen05(data_list: Sequence[input_t]) -> Optional[Seq
         unroll_n = _env_int("AISP_NVFP4_GROUP_GEMM_V2_UNROLL_N", 1)
         if unroll_n not in (1, 2):
             raise ValueError(f"AISP_NVFP4_GROUP_GEMM_V2_UNROLL_N must be 1 or 2, got {unroll_n}")
+        if use_cta2 and unroll_n == 2:
+            raise ValueError(
+                "Experimental cta_group::2 currently supports only AISP_NVFP4_GROUP_GEMM_V2_UNROLL_N=1 "
+                "(TMEM scale-factor layout capacity for 2CTA)."
+            )
         # UnrollN=2 relies on a different (K-major) packed SFB layout and 256-row TMA loads.
         # This is now supported for both cta_group::1 and experimental cta_group::2 launches.
         # Extra B padding is not required for our current cta_group::2 bring-up modes.
@@ -514,13 +537,15 @@ def prepare_v2_custom_cuda_tcgen05(data_list: Sequence[input_t]) -> Optional[Seq
         # shifts the SMEM descriptor base by N/2.
         cta2_partition_b = _env_int("AISP_NVFP4_GROUP_GEMM_V2_CTA2_PARTITION_B", 1)
         if use_cta2 and unroll_n == 2:
-            # UnrollN=2 in cta_group::2 is validated only with descriptor-partition mode 2.
-            cta2_partition_b = 2
+            # Bring-up: keep B duplicated across the 2 CTAs for UnrollN=2.
+            # The kernel forces this mode internally; match the tensormap box height here.
+            cta2_partition_b = 0
         if not use_cta2:
             b_box_height = 256 if unroll_n == 2 else 128
         elif cta2_partition_b == 1:
+            # Mode 1 (global N shift) loads only N/2 rows per CTA.
             b_box_height = 128 if unroll_n == 2 else 64
-        elif unroll_n == 2 and cta2_partition_b == 2:
+        elif unroll_n == 2:
             # UnrollN=2 loads two adjacent N tiles in one 256-row transaction when mode!=1.
             b_box_height = 256
         else:
