@@ -70,17 +70,17 @@ def _set_case_env(case_idx: int) -> None:
     if case_idx == 1:
         os.environ["AISP_NVFP4_GROUP_GEMM_CLUSTER_M"] = "2"
         os.environ["AISP_NVFP4_GROUP_GEMM_CLUSTER_N"] = "1"
-        os.environ["AISP_NVFP4_GROUP_GEMM_RASTER_ORDER"] = "1"
+        os.environ["AISP_NVFP4_GROUP_GEMM_RASTER_ORDER"] = "0"
         os.environ["AISP_NVFP4_GROUP_GEMM_USE_PDL"] = "1"
-        os.environ["AISP_NVFP4_GROUP_GEMM_MAX_SWIZZLE"] = "0"
+        os.environ["AISP_NVFP4_GROUP_GEMM_MAX_SWIZZLE"] = "16"
         return
 
     if case_idx == 2:
         os.environ["AISP_NVFP4_GROUP_GEMM_CLUSTER_M"] = "1"
         os.environ["AISP_NVFP4_GROUP_GEMM_CLUSTER_N"] = "1"
-        os.environ["AISP_NVFP4_GROUP_GEMM_RASTER_ORDER"] = "2"
-        os.environ["AISP_NVFP4_GROUP_GEMM_USE_PDL"] = "1"
-        os.environ["AISP_NVFP4_GROUP_GEMM_MAX_SWIZZLE"] = "8"
+        os.environ["AISP_NVFP4_GROUP_GEMM_RASTER_ORDER"] = "0"
+        os.environ["AISP_NVFP4_GROUP_GEMM_USE_PDL"] = "0"
+        os.environ["AISP_NVFP4_GROUP_GEMM_MAX_SWIZZLE"] = "1"
         return
 
     if case_idx == 3:
@@ -88,7 +88,7 @@ def _set_case_env(case_idx: int) -> None:
         os.environ["AISP_NVFP4_GROUP_GEMM_CLUSTER_N"] = "1"
         os.environ["AISP_NVFP4_GROUP_GEMM_RASTER_ORDER"] = "2"
         os.environ["AISP_NVFP4_GROUP_GEMM_USE_PDL"] = "1"
-        os.environ["AISP_NVFP4_GROUP_GEMM_MAX_SWIZZLE"] = "1"
+        os.environ["AISP_NVFP4_GROUP_GEMM_MAX_SWIZZLE"] = "16"
         return
 
 

@@ -44,7 +44,7 @@ cmd=(
 )
 
 echo "Running: ${cmd[*]}"
-"${cmd[@]}" | tee "${raw_log}"
+"${cmd[@]}" 2>&1 | tee "${raw_log}"
 
 if [[ "${mode}" == "benchmark" ]]; then
   parsed_json="${out_dir}/benchmark_parsed.json"
