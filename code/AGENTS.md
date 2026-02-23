@@ -183,6 +183,25 @@
 - Confirm app_clock (SM/memory) is present in both console telemetry and the run manifest for every benchmark run; treat missing app_clock as invalid.
 - NEVER disable Nsight tools (ncu/nsys); profiling runs must use both and they must succeed.
 
+## NVFP4 Grouped GEMM Perf Playbook (CRITICAL)
+- Treat `--verify` as the hard gate for every tuning candidate; do not promote non-verified wins.
+- Use paired A/B runs (old/new interleaved) before changing defaults; single-run wins are not sufficient.
+- Prefer geomean decisions only after repeated runs (at least 4-8 repeats for comparison), and track stdev.
+- Keep case routing explicit (`CASE{idx}_VARIANT`, `CASE{idx}_CLUSTER_*`, `CASE{idx}_RASTER_ORDER`, `CASE{idx}_MAX_SWIZZLE`, `CASE{idx}_USE_PDL`).
+- Case2/case3 are highest ROI for geomean; optimize them first, then re-check full geomean.
+- `AISP_NVFP4_GROUP_GEMM_SPLIT_CASE23=1` has regressed in current experiments; default remains non-split unless new verified evidence appears.
+- 2SM case2/case3 paths often require different cluster settings to pass `can_implement`; legality does not imply better latency.
+- Stage-count variants (`*_s1..s4`) can look fast in quick scans and regress in repeated verify; always re-validate.
+- New tile-shape variants (for example N=192) must be treated as exploratory until repeated verify A/B proves a win.
+- Prefer robust sweeps that end with a verify phase over quick scan-only ordering.
+- For long sweep scripts, use unbuffered execution (`python -u`) and `flush=True` prints so progress is visible in real time.
+- Buffered vs unbuffered logging affects observability and debugging speed, not kernel performance; keep comparison methodology identical when making claims.
+- If a script captures subprocess output (`capture_output=True`), expect delayed logs; this is a logging artifact, not a kernel artifact.
+- Use clock-locked microbench for low-noise directional checks, but only accept default changes when fresh-input verify A/B also improves.
+- Do not trust one measurement surface alone; reconcile microbench, fresh-input verify, and (when needed) Popcorn test mode behavior.
+- Prefer single-source runtime plans with stable caching; avoid re-planning per call unless shape/tunable/variant changes.
+- Optimize host-side submission overhead (pointer table updates, copies, graph replay path) only if correctness and final geomean remain green.
+
 ## Expectations Files (CRITICAL)
 - Expectation baselines live next to each chapter as `expectations_{hardware_key}.json`.
 - The hardware key includes GPU count + model slug (examples: `expectations_b200.json` for 1x B200, `expectations_4x_b200.json` for 4x B200).
@@ -203,6 +222,16 @@
 - Example: run a single benchmark with `--ncu-metric-set minimal --ncu-replay-mode kernel` instead of changing default NCU settings.
 - When Nsight Compute application replay is unstable (dynamic kernels), use `aisp bench run --ncu-replay-mode kernel` to override the minimal preset for that run.
 
+## Validity Profiles (CRITICAL)
+- Use only two benchmark validity modes everywhere (CLI, MCP, dashboard): `strict` and `portable`.
+- Default is always `strict` (fail-fast, no implicit downgrades).
+- Portable mode must be explicit: `--validity-profile portable` (or CLI shorthand `--portable`).
+- In portable mode, expectation writes are disabled unless explicitly enabled with `--allow-portable-expectations-update`.
+- Do not use aliases/synonyms for validity modes (no transitional names); keep terminology exact and stable.
+- When strict mode fails due environment capability gaps (for example virtualization, clock lock, or telemetry constraints), surface the exact recovery flag and consequence in the error/help text:
+  - `--validity-profile portable` to run compatibility mode.
+  - `--allow-portable-expectations-update` only when the user explicitly wants expectation files updated in portable mode.
+
 ## Defaults Consistency (CRITICAL)
 - CLI, MCP tools, dashboard, and any other entrypoints must stay in sync on defaults (flags, behaviors, and help text). If a default changes, update all entrypoints together in the same change.
 
@@ -222,7 +251,7 @@
 - For any speedups <1.05x, we must improve in a natural manner utilizing hardware, software, and algorithmic speedups.  
 - Both the baseline and the optimized variants need to equivalent workloads.  Perhaps we need to increase the workloads to demonstrate the speedup?  
 - Let's consider all options and find the best speedup 
-- Make sure we're staying with the intent of the example and within the context of the chapter (book/chXX.md).
+- Make sure we're staying with the intent of the example and within the context of the corresponding Chapter XX in the AI Systems Performance Engineering book.
 - It is OK to increase batch size, sequence length, or message sizes to surface clear speedups, as long as baseline and optimized workloads stay equivalent.
 
 ## Multi-GPU Defaults (CRITICAL)
@@ -282,7 +311,7 @@
 - New benchmarks should copy the compliant template (`templates/benchmark_compliant.py`) and keep verification behavior consistent.
 
 ## Chapter Consistency
-- Make sure all code in the chapter (chXX/ examples are consistent with the content in the equivalent chapter (XX) of the AI Systems Performance Engineering book (book/chXX.md)
+- Make sure all code in the chapter (`chXX/` examples) is consistent with the content in the equivalent Chapter XX of the AI Systems Performance Engineering book.
 
 ### Benchmark Example Pairs (Baseline vs. Optimized)
 - Before making changes to these benchmark pairs (baseline_* and optimized_*), be sure to understand the intent of the optimization/comparison before making any changes.  
