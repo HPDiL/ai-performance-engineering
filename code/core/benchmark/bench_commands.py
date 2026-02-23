@@ -174,6 +174,22 @@ def _validate_profile_type(profile: str | None) -> str:
     return normalized
 
 
+def _validate_validity_profile(profile: str | None) -> str:
+    if profile is None:
+        return "strict"
+    normalized = profile.strip().lower()
+    valid = {"strict", "portable"}
+    if normalized not in valid:
+        message = (
+            f"Invalid validity profile '{profile}'. "
+            "Choose from 'strict' or 'portable'."
+        )
+        if TYPER_AVAILABLE and typer is not None:
+            raise typer.BadParameter(message)
+        raise ValueError(message)
+    return normalized
+
+
 def _validate_deep_dive_mode(mode: str | None) -> str:
     if mode is None:
         return "auto"
@@ -327,8 +343,8 @@ def _execute_benchmarks(
     profile_type: str = "minimal",
     suite_timeout: Optional[int] = 14400,
     timeout_multiplier: float = 3.0,
-    allow_invalid_environment: bool = False,
-    allow_virtualization: bool = True,
+    validity_profile: str = "strict",
+    allow_portable_expectations_update: bool = False,
     reproducible: bool = False,
     cold_start: bool = False,
     force_synchronize: bool = False,
@@ -374,6 +390,17 @@ def _execute_benchmarks(
     llm_explain: bool = False,
 ) -> None:
     """Execute selected benchmarks with optional profiling."""
+    validity_profile = _validate_validity_profile(validity_profile)
+    portable_mode = validity_profile == "portable"
+    allow_virtualization = portable_mode
+    if portable_mode and not allow_portable_expectations_update:
+        if update_expectations or accept_regressions or allow_mixed_provenance:
+            print(
+                "Expectation writes are disabled in portable mode unless --allow-portable-expectations-update is provided.",
+                flush=True,
+            )
+            sys.exit(1)
+
     parsed_extra_args = _parse_target_extra_args(target_extra_args)
     active_bench_root = Path(bench_root).resolve() if bench_root else repo_root
 
@@ -478,7 +505,7 @@ def _execute_benchmarks(
     if clock_overrides:
         defaults = replace(defaults, **clock_overrides)
         set_defaults(defaults)
-    gpu_state = get_gpu_state()
+    gpu_state = get_gpu_state(allow_telemetry_failures=portable_mode)
     emit_event(
         event_logger,
         logger,
@@ -490,8 +517,10 @@ def _execute_benchmarks(
         timeout_multiplier=timeout_multiplier,
         nsys_timeout_seconds=nsys_timeout_seconds,
         ncu_timeout_seconds=ncu_timeout_seconds,
+        validity_profile=validity_profile,
         allow_virtualization=allow_virtualization,
         update_expectations=update_expectations,
+        allow_portable_expectations_update=allow_portable_expectations_update,
         allow_mixed_provenance=allow_mixed_provenance,
         artifacts_dir=str(artifact_manager.run_dir),
         log_file=str(log_file),
@@ -765,11 +794,13 @@ def _execute_benchmarks(
             iterations=iterations,
             warmup=warmup,
             single_gpu=single_gpu,
-            enforce_environment_validation=not allow_invalid_environment,
+            enforce_environment_validation=True,
             allow_virtualization=allow_virtualization,
+            validity_profile=validity_profile,
             only_examples=only_examples,
             accept_regressions=accept_regressions,
             update_expectations=update_expectations,
+            allow_portable_expectations_update=allow_portable_expectations_update,
             allow_mixed_provenance=allow_mixed_provenance,
             ncu_metric_set=ncu_metric_set,
             ncu_replay_mode=ncu_replay_mode,
@@ -870,23 +901,20 @@ if TYPER_AVAILABLE:
         suite_timeout: Optional[int] = Option(14400, "--suite-timeout", help="Suite timeout in seconds (default: 14400 = 4 hours, 0 = disabled)"),
         timeout_seconds: Optional[int] = Option(None, "--timeout-seconds", help="Override suite timeout in seconds (0 disables timeout)"),
         timeout_multiplier: float = Option(3.0, "--timeout-multiplier", help="Multiply all benchmark timeouts by this factor (e.g., 2.0 = double all timeouts)"),
-        allow_invalid_environment: bool = Option(
-            False,
-            "--allow-invalid-environment",
+        validity_profile: str = Option(
+            "strict",
+            "--validity-profile",
             help=(
-                "Allow running benchmarks even if validate_environment() reports errors. "
-                "Still emits warnings; results will be invalid. Intended only for diagnostics; "
-                "prefer --allow-virtualization if the only issue is running inside a VM."
+                "Benchmark validity mode: strict (default, fail-fast) or portable "
+                "(explicit compatibility mode for hardware without full benchmark controls)."
             ),
-            is_flag=True,
+            callback=_validate_validity_profile,
         ),
-        allow_virtualization: bool = Option(
-            True,
-            "--allow-virtualization/--disallow-virtualization",
-            help=(
-                "Allow running in a virtualized environment (VM/hypervisor) by downgrading ONLY the "
-                "virtualization check to a loud warning. Default is allow (virtualization is warned)."
-            ),
+        portable: bool = Option(
+            False,
+            "--portable",
+            help="Shortcut for --validity-profile portable.",
+            is_flag=True,
         ),
         reproducible: bool = Option(False, "--reproducible", help="Enable reproducible mode: set all seeds to 42 and force deterministic algorithms (uses slower fallbacks; ops without deterministic support may error)."),
         cold_start: bool = Option(False, "--cold-start", help="Reset GPU state between benchmarks for cold start measurements"),
@@ -955,6 +983,15 @@ if TYPER_AVAILABLE:
         only_python: bool = Option(False, "--only-python", help="Run only Python benchmarks (skip CUDA binary wrappers)."),
         accept_regressions: bool = Option(False, "--accept-regressions", help="Update expectation files when improvements are detected instead of flagging regressions.", is_flag=True),
         update_expectations: bool = Option(False, "--update-expectations", help="Force-write observed metrics into expectation files (overrides regressions). Useful for refreshing baselines on new hardware.", is_flag=True),
+        allow_portable_expectations_update: bool = Option(
+            False,
+            "--allow-portable-expectations-update",
+            help=(
+                "Required to write expectations while running in portable validity mode. "
+                "Without this flag, portable runs never modify expectation files."
+            ),
+            is_flag=True,
+        ),
         allow_mixed_provenance: bool = Option(False, "--allow-mixed-provenance", help="Allow expectation updates when provenance differs (commit/hardware/profile mismatch) without forcing updates. Does NOT accept regressions (use --accept-regressions or --update-expectations).", is_flag=True),
         launch_via: str = Option("python", "--launch-via", help="Launcher to use for benchmarks: python or torchrun."),
         nproc_per_node: Optional[int] = Option(None, "--nproc-per-node", help="torchrun --nproc_per_node value."),
@@ -1011,6 +1048,7 @@ if TYPER_AVAILABLE:
             os.environ["VERIFY_ENFORCEMENT_PHASE"] = verify_phase.lower()
         
         if precheck_only or dry_run:
+            effective_validity_profile = "portable" if portable else validity_profile
             plan = {
                 "precheck_only": precheck_only,
                 "dry_run": dry_run,
@@ -1021,9 +1059,9 @@ if TYPER_AVAILABLE:
                 "suite_timeout": effective_timeout,
                 "verify_phase": verify_phase,
                 "single_gpu": single_gpu,
-                "allow_invalid_environment": allow_invalid_environment,
-                "allow_virtualization": allow_virtualization,
+                "validity_profile": effective_validity_profile,
                 "allow_mixed_provenance": allow_mixed_provenance,
+                "allow_portable_expectations_update": allow_portable_expectations_update,
                 "force_sync": force_sync,
                 "gpu_sm_clock_mhz": gpu_sm_clock_mhz,
                 "gpu_mem_clock_mhz": gpu_mem_clock_mhz,
@@ -1032,6 +1070,7 @@ if TYPER_AVAILABLE:
             }
             typer.echo(json.dumps(plan, indent=2))
             raise typer.Exit(code=0)
+        effective_validity_profile = "portable" if portable else validity_profile
         _execute_benchmarks(
             targets=combined_targets or None,
             bench_root=active_bench_root,
@@ -1039,8 +1078,8 @@ if TYPER_AVAILABLE:
             profile_type=profile_type,
             suite_timeout=effective_timeout,
             timeout_multiplier=timeout_multiplier,
-            allow_invalid_environment=allow_invalid_environment,
-            allow_virtualization=allow_virtualization,
+            validity_profile=effective_validity_profile,
+            allow_portable_expectations_update=allow_portable_expectations_update,
             reproducible=reproducible,
             cold_start=cold_start,
             force_synchronize=force_sync,
@@ -1111,28 +1150,28 @@ if TYPER_AVAILABLE:
         deep_dive_warmup: int = Option(5, "--deep-dive-warmup", help="Override warmup iterations for deep_dive run (default: 5)."),
         deep_dive_timeout_seconds: Optional[int] = Option(0, "--deep-dive-timeout-seconds", help="Max runtime for deep_dive run (0 disables timeout)."),
         update_expectations: bool = Option(True, "--update-expectations/--no-update-expectations", help="Force-write observed metrics into expectation files (recommended)."),
-        allow_invalid_environment: bool = Option(
+        validity_profile: str = Option(
+            "strict",
+            "--validity-profile",
+            help="Benchmark validity mode: strict (default) or portable.",
+            callback=_validate_validity_profile,
+        ),
+        portable: bool = Option(False, "--portable", help="Shortcut for --validity-profile portable.", is_flag=True),
+        allow_portable_expectations_update: bool = Option(
             False,
-            "--allow-invalid-environment",
+            "--allow-portable-expectations-update",
             help=(
-                "Allow running benchmarks even if validate_environment() reports errors. "
-                "Still emits warnings; results may be invalid. Intended only for diagnostics."
+                "Required to write expectations while running in portable validity mode. "
+                "Without this flag, portable runs never modify expectation files."
             ),
             is_flag=True,
-        ),
-        allow_virtualization: bool = Option(
-            True,
-            "--allow-virtualization/--disallow-virtualization",
-            help=(
-                "Allow running in a virtualized environment (VM/hypervisor) by downgrading ONLY the "
-                "virtualization check to a loud warning. Default is allow (virtualization is warned)."
-            ),
         ),
         async_run: bool = Option(False, "--async", help="Run in background and return job_id; poll with job_status.", is_flag=True),
     ):
         """Copy a baseline benchmark, run LLM variants with profiling, and compare utilization."""
         from mcp.mcp_server import tool_benchmark_explore
 
+        effective_validity_profile = "portable" if portable else validity_profile
         params: Dict[str, Any] = {
             "path": str(path),
             "copy_tag": copy_tag,
@@ -1149,8 +1188,8 @@ if TYPER_AVAILABLE:
             "deep_dive_warmup": deep_dive_warmup,
             "deep_dive_timeout_seconds": deep_dive_timeout_seconds,
             "update_expectations": update_expectations,
-            "allow_invalid_environment": allow_invalid_environment,
-            "allow_virtualization": allow_virtualization,
+            "validity_profile": effective_validity_profile,
+            "allow_portable_expectations_update": allow_portable_expectations_update,
             "async": async_run,
         }
         result = tool_benchmark_explore(params)

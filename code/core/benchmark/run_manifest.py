@@ -188,7 +188,7 @@ def get_gpu_info() -> GpuInfoDict:
     return gpu_info
 
 
-def get_gpu_state() -> GpuStateDict:
+def get_gpu_state(*, allow_telemetry_failures: bool = False) -> GpuStateDict:
     """Get GPU state information (clocks, app clocks, persistence mode, power limit).
     
     Returns:
@@ -213,7 +213,16 @@ def get_gpu_state() -> GpuStateDict:
         if torch.cuda.is_available():
             # Force refresh so app_clock is accurate when benchmarks lock clocks
             # and we capture state immediately after the lock is applied.
-            telemetry = query_gpu_telemetry(force_refresh=True)
+            try:
+                telemetry = query_gpu_telemetry(force_refresh=True)
+            except Exception:
+                if not allow_telemetry_failures:
+                    raise
+                telemetry = None
+                logger.warning(
+                    "Portable validity mode: GPU telemetry fields unavailable; capturing partial GPU state.",
+                    exc_info=True,
+                )
             if telemetry:
                 if telemetry.get("graphics_clock_mhz") is not None:
                     try:
@@ -524,7 +533,8 @@ class RunManifest(BaseModel):
         # Get hardware info
         cuda_info = get_cuda_info()
         gpu_info = get_gpu_info()
-        gpu_state = get_gpu_state()
+        validity_profile = str((config or {}).get("validity_profile", "strict")).strip().lower()
+        gpu_state = get_gpu_state(allow_telemetry_failures=validity_profile == "portable")
         hardware = HardwareInfo(
             gpu_model=gpu_info.get("model"),
             cuda_version=cuda_info.get("version"),

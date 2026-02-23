@@ -32,7 +32,8 @@ python -m cli.aisp bench list-targets --chapter ch09
 python -m cli.aisp bench run --targets ch09 --profile minimal
 ```
 - Override `--profile` or `--iterations` per workload when capturing Nsight traces.
-- Expectation baselines live next to each chapter in `expectations_{hardware_key}.json`; refresh with `--update-expectations` after validating new hardware.
+- Validity defaults to strict mode. Use `--validity-profile portable` (or `--portable`) only when strict mode fails on unsupported hardware controls.
+- Expectation baselines live next to each chapter in `expectations_{hardware_key}.json`; refresh with `--update-expectations` after validating new hardware. In portable mode, add `--allow-portable-expectations-update` to write expectation files explicitly.
 
 ## Validation Checklist
 - `python baseline_compute_bound.py --summaries` reports much higher arithmetic intensity than `baseline_memory_bound.py`, matching the roofline plots.

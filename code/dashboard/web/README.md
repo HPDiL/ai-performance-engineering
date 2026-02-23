@@ -76,6 +76,22 @@ src/
 
 The Next.js app proxies all `/api/*` requests to the Python backend at `http://localhost:6970`. Configure this in `next.config.js`.
 
+## Benchmark Validity Profile Parity
+
+Dashboard benchmark actions are backed by MCP benchmark tools and use the same validity flags as CLI/MCP:
+- `validity_profile`: `strict` (default) or `portable`
+- `allow_portable_expectations_update`: required if a portable run should update expectation files
+
+Example backend payload:
+
+```json
+{
+  "targets": ["ch10:atomic_reduction"],
+  "profile": "minimal",
+  "validity_profile": "strict"
+}
+```
+
 ## Styling
 
 Uses Tailwind CSS with custom design tokens matching the original dashboard aesthetic:

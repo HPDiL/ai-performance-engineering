@@ -803,10 +803,17 @@ class BenchmarkConfig:
     would otherwise prevent exercising the harness logic.
     """
 
-    allow_virtualization: bool = field(default_factory=lambda: _get_default_value("allow_virtualization", True))
+    validity_profile: str = field(default_factory=lambda: _get_default_value("validity_profile", "strict"))
+    """Benchmark validity profile: strict (default) or portable.
+
+    strict: fail-fast on environment and hardware capability requirements.
+    portable: explicit opt-in mode for broader hardware support with loud warnings.
+    """
+
+    allow_virtualization: bool = field(default_factory=lambda: _get_default_value("allow_virtualization", False))
     """Allow running benchmarks under virtualization (VM/hypervisor).
 
-    Enabled by default: virtualized environments emit loud warnings by default.
+    Disabled by default in strict mode.
     Only the virtualization check is downgraded when enabled; other
     environment errors remain fatal when enforce_environment_validation=True.
     """
@@ -816,7 +823,7 @@ class BenchmarkConfig:
 
     # Graph capture cheat detection thresholds
     graph_capture_cheat_ratio_threshold: float = field(default_factory=lambda: _get_default_value("graph_capture_cheat_ratio_threshold", 10.0))
-    """Max allowed capture/replay ratio before flagging a cheat (higher is more lenient)."""
+    """Max allowed capture/replay ratio before flagging a cheat (higher is more permissive)."""
     
     graph_capture_memory_threshold_mb: float = field(default_factory=lambda: _get_default_value("graph_capture_memory_threshold_mb", 100.0))
     """Memory allocated during capture above this threshold is considered suspicious."""
@@ -838,6 +845,14 @@ class BenchmarkConfig:
             self.env_passthrough = []
         if self.target_extra_args is None:
             self.target_extra_args = {}
+
+        validity_profile = str(getattr(self, "validity_profile", "strict")).strip().lower()
+        if validity_profile not in {"strict", "portable"}:
+            raise ValueError(
+                f"Invalid validity_profile={validity_profile!r}. Expected 'strict' or 'portable'."
+            )
+        self.validity_profile = validity_profile
+        self.allow_virtualization = validity_profile == "portable"
         
         # CRITICAL: Validate and enforce minimum warmup iterations
         # This ensures JIT/compile overhead is NEVER included in measurements.
@@ -2341,7 +2356,7 @@ class BenchmarkHarness:
         env_result = validate_environment(
             device=self.device,
             probe=self._environment_probe,
-            allow_virtualization=bool(getattr(config, "allow_virtualization", True)),
+            allow_virtualization=bool(getattr(config, "allow_virtualization", False)),
         )
         if LOGGER_AVAILABLE:
             for warning in env_result.warnings:
@@ -3236,7 +3251,7 @@ class BenchmarkHarness:
         env_result = validate_environment(
             device=self.device,
             probe=self._environment_probe,
-            allow_virtualization=bool(getattr(config, "allow_virtualization", True)),
+            allow_virtualization=bool(getattr(config, "allow_virtualization", False)),
         )
         if LOGGER_AVAILABLE:
             for warning in env_result.warnings:
@@ -3317,19 +3332,32 @@ class BenchmarkHarness:
         def run_benchmark_internal():
             """Internal benchmark execution function."""
             nonlocal times_ms, memory_peak_mb, memory_allocated_mb, profiling_outputs, errors, nsys_metrics, ncu_metrics, timeout_result_storage, inference_timing_data, locked_gpu_metrics
+            validity_profile = str(getattr(config, "validity_profile", "strict")).strip().lower()
+            portable_mode = validity_profile == "portable"
+            clock_lock_active = False
             
             with execution_lock:  # Acquire lock during execution
                 lock_stack = ExitStack()
                 try:
                     if getattr(config, "lock_gpu_clocks", False) and self.device.type == "cuda":
                         device_index = self.device.index if self.device.index is not None else 0
-                        lock_stack.enter_context(
-                            lock_gpu_clocks(
-                                device=device_index,
-                                sm_clock_mhz=getattr(config, "gpu_sm_clock_mhz", None),
-                                mem_clock_mhz=getattr(config, "gpu_mem_clock_mhz", None),
+                        try:
+                            lock_stack.enter_context(
+                                lock_gpu_clocks(
+                                    device=device_index,
+                                    sm_clock_mhz=getattr(config, "gpu_sm_clock_mhz", None),
+                                    mem_clock_mhz=getattr(config, "gpu_mem_clock_mhz", None),
+                                )
                             )
-                        )
+                            clock_lock_active = True
+                        except Exception:
+                            if not portable_mode:
+                                raise
+                            if LOGGER_AVAILABLE:
+                                logger.warning(
+                                    "Portable validity mode: clock lock unavailable; continuing without locked clocks.",
+                                    exc_info=True,
+                                )
 
                     def _init_cuda_for_worker_thread() -> None:
                         if not torch.cuda.is_available():
@@ -3435,7 +3463,7 @@ class BenchmarkHarness:
                         if measurement_timeout is not None and setup_time > measurement_timeout * 0.5:
                             logger.warning(f"Setup took {setup_time:.1f}s (consider setting setup_timeout_seconds)")
 
-                    if getattr(config, "lock_gpu_clocks", False) and self.device.type == "cuda":
+                    if clock_lock_active and self.device.type == "cuda":
                         device_index = self.device.index if self.device.index is not None else 0
                         ramp_gpu_clocks(device=device_index)
                         if getattr(config, "reset_memory_pool", True):
@@ -3476,57 +3504,66 @@ class BenchmarkHarness:
                     else:
                         mark_stage('warmup', 'skipped')
                     
-                    if getattr(config, "lock_gpu_clocks", False) and self.device.type == "cuda":
+                    if clock_lock_active and self.device.type == "cuda":
                         device_index = self.device.index if self.device.index is not None else 0
                         # Re-assert application clocks right before measurement. We've observed rare cases where
                         # application clocks drift between targets (or get reset) which invalidates results.
                         # This is a best-effort repair, but if we still cannot reach the requested clocks,
                         # fail fast to avoid recording an invalid run.
-                        target_sm = getattr(config, "gpu_sm_clock_mhz", None)
-                        target_mem = getattr(config, "gpu_mem_clock_mhz", None)
-                        if target_sm is not None and target_mem is not None:
-                            target_sm_i = int(target_sm)
-                            target_mem_i = int(target_mem)
-                            physical_index = _resolve_physical_device_index(device_index)
+                        try:
+                            target_sm = getattr(config, "gpu_sm_clock_mhz", None)
+                            target_mem = getattr(config, "gpu_mem_clock_mhz", None)
+                            if target_sm is not None and target_mem is not None:
+                                target_sm_i = int(target_sm)
+                                target_mem_i = int(target_mem)
+                                physical_index = _resolve_physical_device_index(device_index)
 
-                            def _read_app_clocks() -> tuple[int, int]:
-                                snap = query_gpu_telemetry(device_index=device_index, force_refresh=True)
-                                app_sm = int(float(snap.get("applications_clock_sm_mhz") or -1))
-                                app_mem = int(float(snap.get("applications_clock_memory_mhz") or -1))
-                                return app_sm, app_mem
+                                def _read_app_clocks() -> tuple[int, int]:
+                                    snap = query_gpu_telemetry(device_index=device_index, force_refresh=True)
+                                    app_sm = int(float(snap.get("applications_clock_sm_mhz") or -1))
+                                    app_mem = int(float(snap.get("applications_clock_memory_mhz") or -1))
+                                    return app_sm, app_mem
 
-                            app_sm, app_mem = _read_app_clocks()
-                            if abs(app_sm - target_sm_i) > 50 or abs(app_mem - target_mem_i) > 50:
-                                last_app = (app_sm, app_mem)
-                                for _attempt in range(3):
-                                    try:
-                                        _nvidia_smi(["-i", str(physical_index), "-pm", "1"])
-                                        _nvidia_smi(
-                                            [
-                                                "-i",
-                                                str(physical_index),
-                                                f"--applications-clocks={target_mem_i},{target_sm_i}",
-                                            ]
-                                        )
-                                    except Exception:
-                                        pass
-                                    time.sleep(0.05)
-                                    app_sm, app_mem = _read_app_clocks()
+                                app_sm, app_mem = _read_app_clocks()
+                                if abs(app_sm - target_sm_i) > 50 or abs(app_mem - target_mem_i) > 50:
                                     last_app = (app_sm, app_mem)
-                                    if abs(app_sm - target_sm_i) <= 50 and abs(app_mem - target_mem_i) <= 50:
-                                        break
-                                else:
-                                    raise RuntimeError(
-                                        "GPU clock lock invalid at measurement start: "
-                                        f"requested SM={target_sm_i}MHz Mem={target_mem_i}MHz, "
-                                        f"applications SM={last_app[0]}MHz Mem={last_app[1]}MHz"
-                                    )
+                                    for _attempt in range(3):
+                                        try:
+                                            _nvidia_smi(["-i", str(physical_index), "-pm", "1"])
+                                            _nvidia_smi(
+                                                [
+                                                    "-i",
+                                                    str(physical_index),
+                                                    f"--applications-clocks={target_mem_i},{target_sm_i}",
+                                                ]
+                                            )
+                                        except Exception:
+                                            pass
+                                        time.sleep(0.05)
+                                        app_sm, app_mem = _read_app_clocks()
+                                        last_app = (app_sm, app_mem)
+                                        if abs(app_sm - target_sm_i) <= 50 and abs(app_mem - target_mem_i) <= 50:
+                                            break
+                                    else:
+                                        raise RuntimeError(
+                                            "GPU clock lock invalid at measurement start: "
+                                            f"requested SM={target_sm_i}MHz Mem={target_mem_i}MHz, "
+                                            f"applications SM={last_app[0]}MHz Mem={last_app[1]}MHz"
+                                        )
 
-                        # Short ramp to bring current clocks up to the locked application clocks.
-                        ramp_gpu_clocks(device=device_index, duration_ms=10.0, max_iters=40)
-                        # Capture telemetry while clocks are locked so the run manifest reflects
-                        # the real measurement environment (not the post-reset state).
-                        locked_gpu_metrics = query_gpu_telemetry(device_index=device_index, force_refresh=True)
+                            # Short ramp to bring current clocks up to the locked application clocks.
+                            ramp_gpu_clocks(device=device_index, duration_ms=10.0, max_iters=40)
+                            # Capture telemetry while clocks are locked so the run manifest reflects
+                            # the real measurement environment (not the post-reset state).
+                            locked_gpu_metrics = query_gpu_telemetry(device_index=device_index, force_refresh=True)
+                        except Exception:
+                            if not portable_mode:
+                                raise
+                            if LOGGER_AVAILABLE:
+                                logger.warning(
+                                    "Portable validity mode: app-clock verification unavailable; continuing.",
+                                    exc_info=True,
+                                )
 
                     # Memory tracking: Use context manager to track peak memory during benchmark execution
                     start_stage('measurement')
@@ -4139,7 +4176,7 @@ class BenchmarkHarness:
         env_result = validate_environment(
             device=self.device,
             probe=self._environment_probe,
-            allow_virtualization=bool(getattr(config, "allow_virtualization", True)),
+            allow_virtualization=bool(getattr(config, "allow_virtualization", False)),
         )
         for warning in env_result.warnings:
             import warnings as warn_module

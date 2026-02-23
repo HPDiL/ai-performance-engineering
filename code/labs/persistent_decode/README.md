@@ -27,6 +27,8 @@ python -m cli.aisp bench run --targets labs/persistent_decode --profile minimal
 ```
 - Targets follow the `labs/persistent_decode:<workload>` naming convention listed by `list-targets`.
 - Use `--target-extra-arg labs/persistent_decode:<workload>="--flag value"` to sweep schedule knobs.
+- Validity defaults to strict mode. Use `--validity-profile portable` (or `--portable`) only when strict mode fails on unsupported hardware controls.
+- Portable runs do not write expectation files unless `--allow-portable-expectations-update` is also provided.
 
 ## Validation Checklist
 - `python -m cli.aisp bench run --targets labs/persistent_decode --profile minimal` compares all persistent/TMA variants in one sweep.

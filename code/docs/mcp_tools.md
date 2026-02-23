@@ -46,6 +46,22 @@ It also runs post-benchmark triage and generates an HTML report unless you set
 }
 ```
 
+### Benchmark validity profile (shared with CLI/dashboard)
+
+- `validity_profile`: `strict` (default) or `portable`
+- `allow_portable_expectations_update`: required when a portable run should write expectation files
+
+Example portable run:
+
+```json
+{
+  "targets": ["ch10:atomic_reduction"],
+  "profile": "minimal",
+  "validity_profile": "portable",
+  "allow_portable_expectations_update": true
+}
+```
+
 ## Tool Names
 
 Tool names are the exact names returned by `tools/list` / `--list` (for example: `gpu_info`, not `gpu info`).

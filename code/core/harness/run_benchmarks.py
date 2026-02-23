@@ -144,6 +144,25 @@ PROGRESS_PHASES = {
     "llm_explain": 16,
     "complete": 17,
 }
+
+
+def _query_gpu_telemetry_for_profile(
+    validity_profile: str,
+    *,
+    device_index: Optional[int] = None,
+    force_refresh: bool = False,
+) -> Optional[Dict[str, Optional[float | str]]]:
+    """Query GPU telemetry with strict/portable validity semantics."""
+    try:
+        return query_gpu_telemetry(device_index=device_index, force_refresh=force_refresh)
+    except Exception:
+        if str(validity_profile).strip().lower() == "portable":
+            logger.warning(
+                "Portable validity mode: GPU telemetry field unavailable on this hardware; continuing.",
+                exc_info=True,
+            )
+            return None
+        raise
 PROGRESS_TOTAL_PHASES = max(PROGRESS_PHASES.values())
 
 # Import metric extraction utilities
@@ -1910,7 +1929,10 @@ def profile_python_benchmark(
         except Exception:
             bench_config = None
     nvtx_includes = getattr(bench_config, "nsys_nvtx_include", None) if bench_config else None
+    validity_profile = str(getattr(bench_config, "validity_profile", "strict")).strip().lower() if bench_config else "strict"
     lock_gpu_clocks_flag = bool(getattr(bench_config, "lock_gpu_clocks", False)) if bench_config else False
+    if validity_profile != "strict":
+        lock_gpu_clocks_flag = False
     gpu_sm_clock_mhz = getattr(bench_config, "gpu_sm_clock_mhz", None) if bench_config else None
     gpu_mem_clock_mhz = getattr(bench_config, "gpu_mem_clock_mhz", None) if bench_config else None
     repo_root = chapter_dir.parent
@@ -1947,6 +1969,7 @@ _profiling_config = BenchmarkConfig(
     enable_profiling=True,
     enable_nvtx=True,
     nsys_nvtx_include={nvtx_includes!r},
+    validity_profile={validity_profile!r},
     lock_gpu_clocks={lock_gpu_clocks_flag!r},
     gpu_sm_clock_mhz={gpu_sm_clock_mhz!r},
     gpu_mem_clock_mhz={gpu_mem_clock_mhz!r},
@@ -2179,7 +2202,10 @@ def profile_python_benchmark_ncu(
             metrics_override = resolve_ncu_metrics("deep_dive", chapter=None)
     else:
         metrics_override = resolve_ncu_metrics(metric_set, chapter=chapter_num)
+    validity_profile = str(getattr(config, "validity_profile", "strict")).strip().lower()
     lock_gpu_clocks_flag = bool(getattr(config, "lock_gpu_clocks", False))
+    if validity_profile != "strict":
+        lock_gpu_clocks_flag = False
     gpu_sm_clock_mhz = getattr(config, "gpu_sm_clock_mhz", None)
     gpu_mem_clock_mhz = getattr(config, "gpu_mem_clock_mhz", None)
 
@@ -2219,6 +2245,7 @@ _profiling_config = BenchmarkConfig(
     ncu_metric_set={config.ncu_metric_set!r},
     pm_sampling_interval={config.pm_sampling_interval!r},
     ncu_replay_mode={config.ncu_replay_mode!r},
+    validity_profile={validity_profile!r},
     lock_gpu_clocks={lock_gpu_clocks_flag!r},
     gpu_sm_clock_mhz={gpu_sm_clock_mhz!r},
     gpu_mem_clock_mhz={gpu_mem_clock_mhz!r},
@@ -2482,9 +2509,20 @@ def profile_python_benchmark_torch(
     # The main harness may have executed timing in a subprocess, so this in-memory
     # benchmark instance has not necessarily been setup() yet. Always setup/teardown
     # for torch profiler captures.
+    existing_cfg = getattr(benchmark, "_config", None)
+    validity_profile = str(getattr(existing_cfg, "validity_profile", "strict")).strip().lower()
+    if validity_profile not in {"strict", "portable"}:
+        validity_profile = "strict"
+    lock_gpu_clocks_flag = bool(getattr(existing_cfg, "lock_gpu_clocks", True))
+    if validity_profile != "strict":
+        lock_gpu_clocks_flag = False
     profiling_config = BenchmarkConfig(
         enable_profiling=True,
         enable_nvtx=True,
+        validity_profile=validity_profile,
+        lock_gpu_clocks=lock_gpu_clocks_flag,
+        gpu_sm_clock_mhz=getattr(existing_cfg, "gpu_sm_clock_mhz", None),
+        gpu_mem_clock_mhz=getattr(existing_cfg, "gpu_mem_clock_mhz", None),
     )
     benchmark._config = ReadOnlyBenchmarkConfigView.from_config(profiling_config)
 
@@ -2767,7 +2805,12 @@ def _merge_benchmark_config(
     merged.allow_virtualization = getattr(
         base_config,
         "allow_virtualization",
-        getattr(merged, "allow_virtualization", True),
+        getattr(merged, "allow_virtualization", False),
+    )
+    merged.validity_profile = getattr(
+        base_config,
+        "validity_profile",
+        getattr(merged, "validity_profile", "strict"),
     )
 
     return merged
@@ -2785,7 +2828,9 @@ def _test_chapter_impl(
     warmup: Optional[int] = None,
     single_gpu: bool = False,
     enforce_environment_validation: bool = True,
-    allow_virtualization: bool = True,
+    allow_virtualization: bool = False,
+    validity_profile: str = "strict",
+    allow_portable_expectations_update: bool = False,
     only_examples: Optional[List[str]] = None,
     accept_regressions: bool = False,
     update_expectations: bool = False,
@@ -2845,6 +2890,21 @@ def _test_chapter_impl(
         target_extra_args: Optional per-target arg overrides (target -> list of CLI args)
     """
     logger.info("launch_via arg=%s nproc_per_node=%s nnodes=%s", launch_via, nproc_per_node, nnodes)
+    validity_profile = str(validity_profile).strip().lower()
+    if validity_profile not in {"strict", "portable"}:
+        raise ValueError(
+            f"Invalid validity_profile={validity_profile!r}. Expected 'strict' or 'portable'."
+        )
+    allow_virtualization = validity_profile == "portable"
+    expectation_writes_enabled = (
+        validity_profile == "strict" or bool(allow_portable_expectations_update)
+    )
+    if not expectation_writes_enabled:
+        logger.warning(
+            "Portable validity mode active: expectation file updates are disabled. "
+            "Set allow_portable_expectations_update=True to enable writes."
+        )
+
     if single_gpu:
         visible = os.environ.get("CUDA_VISIBLE_DEVICES")
         if visible:
@@ -2870,6 +2930,7 @@ def _test_chapter_impl(
         ncu_timeout_seconds=ncu_timeout_seconds,
         ncu_metric_set=ncu_metric_set,
         enforce_environment_validation=enforce_environment_validation,
+        validity_profile=validity_profile,
         allow_virtualization=allow_virtualization,
         launch_via=launch_via,
         nproc_per_node=nproc_per_node,
@@ -3097,6 +3158,7 @@ def _test_chapter_impl(
         seed=42 if reproducible else None,  # Set seed for reproducibility
         deterministic=reproducible,  # Enable deterministic algorithms for reproducibility
         enforce_environment_validation=enforce_environment_validation,
+        validity_profile=validity_profile,
         allow_virtualization=allow_virtualization,
         force_synchronize=force_synchronize,
         ncu_metric_set=ncu_metric_set,
@@ -5307,26 +5369,37 @@ def _test_chapter_impl(
                         best_optimization_file=best_opt.get("file"),
                         best_optimization_technique=best_opt.get("technique"),
                     )
-                    update_result = expectations_store.update_entry(example_key, entry)
-                    try:
-                        result_entry["expectation"] = update_result.to_dict()
-                    except Exception:
+                    update_result = None
+                    if expectation_writes_enabled:
+                        update_result = expectations_store.update_entry(example_key, entry)
+                        try:
+                            result_entry["expectation"] = update_result.to_dict()
+                        except Exception:
+                            result_entry["expectation"] = {
+                                "status": update_result.status,
+                                "message": update_result.message,
+                                "validation_issues": [issue.to_dict() for issue in update_result.validation_issues],
+                            }
+                        logger.info("    Expectations: %s", update_result.message)
+                        log_expectation_delta(
+                            logger,
+                            example_key=example_key,
+                            goal=optimization_goal,
+                            old_entry=old_entry,
+                            new_entry=entry,
+                            update_result=update_result,
+                            event_logger=event_logger,
+                            chapter=chapter_name,
+                        )
+                    else:
                         result_entry["expectation"] = {
-                            "status": update_result.status,
-                            "message": update_result.message,
-                            "validation_issues": [issue.to_dict() for issue in update_result.validation_issues],
+                            "status": "skipped",
+                            "message": (
+                                "Expectation updates disabled in portable validity mode. "
+                                "Enable allow_portable_expectations_update to write expectation files."
+                            ),
+                            "validation_issues": [],
                         }
-                    logger.info("    Expectations: %s", update_result.message)
-                    log_expectation_delta(
-                        logger,
-                        example_key=example_key,
-                        goal=optimization_goal,
-                        old_entry=old_entry,
-                        new_entry=entry,
-                        update_result=update_result,
-                        event_logger=event_logger,
-                        chapter=chapter_name,
-                    )
 
                 is_rejected_regression = bool(
                     update_result
@@ -5345,7 +5418,7 @@ def _test_chapter_impl(
                         if temp is not None and temp >= 85:
                             logger.warning("    ⚠️ GPU temperature %.1f°C exceeds recommended threshold; consider cooling or resetting before re-running.", temp)
                     else:
-                        live_metrics = query_gpu_telemetry()
+                        live_metrics = _query_gpu_telemetry_for_profile(validity_profile)
                         logger.warning("    🌡️ GPU telemetry during regression: %s", format_gpu_telemetry(live_metrics))
                     result_entry['status'] = 'failed_regression'
                     result_entry["error"] = update_result.message if update_result else "Expectation regression detected"
@@ -5572,7 +5645,7 @@ def _test_chapter_impl(
 
             baseline_gpu_metrics = getattr(baseline_result, "gpu_metrics", None)
             if not baseline_gpu_metrics:
-                baseline_gpu_metrics = query_gpu_telemetry()
+                baseline_gpu_metrics = _query_gpu_telemetry_for_profile(validity_profile)
             if baseline_gpu_metrics:
                 result_entry['baseline_gpu_metrics'] = baseline_gpu_metrics
                 logger.info(f"      🌡️ GPU Telemetry: {format_gpu_telemetry(baseline_gpu_metrics)}")
@@ -6037,7 +6110,7 @@ def _test_chapter_impl(
                     opt_result['p90_ms'] = opt_p90
                 cuda_opt_gpu_metrics = getattr(optimized_result, "gpu_metrics", None)
                 if not cuda_opt_gpu_metrics:
-                    cuda_opt_gpu_metrics = query_gpu_telemetry()
+                    cuda_opt_gpu_metrics = _query_gpu_telemetry_for_profile(validity_profile)
                 if cuda_opt_gpu_metrics:
                     opt_result['gpu_metrics'] = cuda_opt_gpu_metrics
                     logger.info(f"        🌡️ GPU Telemetry: {format_gpu_telemetry(cuda_opt_gpu_metrics)}")
@@ -6540,26 +6613,37 @@ def _test_chapter_impl(
                         best_optimization_file=best_opt.get("file"),
                         best_optimization_technique=best_opt.get("technique"),
                     )
-                    update_result = expectations_store.update_entry(example_key, entry)
-                    try:
-                        result_entry["expectation"] = update_result.to_dict()
-                    except Exception:
+                    update_result = None
+                    if expectation_writes_enabled:
+                        update_result = expectations_store.update_entry(example_key, entry)
+                        try:
+                            result_entry["expectation"] = update_result.to_dict()
+                        except Exception:
+                            result_entry["expectation"] = {
+                                "status": update_result.status,
+                                "message": update_result.message,
+                                "validation_issues": [issue.to_dict() for issue in update_result.validation_issues],
+                            }
+                        logger.info("    Expectations: %s", update_result.message)
+                        log_expectation_delta(
+                            logger,
+                            example_key=example_key,
+                            goal=optimization_goal,
+                            old_entry=old_entry,
+                            new_entry=entry,
+                            update_result=update_result,
+                            event_logger=event_logger,
+                            chapter=chapter_name,
+                        )
+                    else:
                         result_entry["expectation"] = {
-                            "status": update_result.status,
-                            "message": update_result.message,
-                            "validation_issues": [issue.to_dict() for issue in update_result.validation_issues],
+                            "status": "skipped",
+                            "message": (
+                                "Expectation updates disabled in portable validity mode. "
+                                "Enable allow_portable_expectations_update to write expectation files."
+                            ),
+                            "validation_issues": [],
                         }
-                    logger.info("    Expectations: %s", update_result.message)
-                    log_expectation_delta(
-                        logger,
-                        example_key=example_key,
-                        goal=optimization_goal,
-                        old_entry=old_entry,
-                        new_entry=entry,
-                        update_result=update_result,
-                        event_logger=event_logger,
-                        chapter=chapter_name,
-                    )
 
                 is_rejected_regression = bool(
                     update_result
@@ -6584,7 +6668,7 @@ def _test_chapter_impl(
                                 temp,
                             )
                     else:
-                        live_metrics = query_gpu_telemetry()
+                        live_metrics = _query_gpu_telemetry_for_profile(validity_profile)
                         logger.warning(
                             "    🌡️ GPU telemetry during regression: %s",
                             format_gpu_telemetry(live_metrics),
@@ -8463,7 +8547,9 @@ def test_chapter(
     warmup: Optional[int] = None,
     single_gpu: bool = False,
     enforce_environment_validation: bool = True,
-    allow_virtualization: bool = True,
+    allow_virtualization: bool = False,
+    validity_profile: str = "strict",
+    allow_portable_expectations_update: bool = False,
     only_examples: Optional[List[str]] = None,
     accept_regressions: bool = False,
     update_expectations: bool = False,
@@ -8515,6 +8601,8 @@ def test_chapter(
         single_gpu=single_gpu,
         enforce_environment_validation=enforce_environment_validation,
         allow_virtualization=allow_virtualization,
+        validity_profile=validity_profile,
+        allow_portable_expectations_update=allow_portable_expectations_update,
         graph_capture_ratio_threshold=graph_capture_ratio_threshold,
         graph_capture_memory_threshold_mb=graph_capture_memory_threshold_mb,
         only_examples=only_examples,
@@ -8999,6 +9087,22 @@ def main():
         help='Multiply all benchmark timeouts by this factor (e.g., 2.0 doubles every timeout).'
     )
     parser.add_argument(
+        '--validity-profile',
+        choices=['strict', 'portable'],
+        default='strict',
+        help='Benchmark validity mode: strict (default, fail-fast) or portable (explicit compatibility mode).'
+    )
+    parser.add_argument(
+        '--portable',
+        action='store_true',
+        help='Shortcut for --validity-profile portable.'
+    )
+    parser.add_argument(
+        '--allow-portable-expectations-update',
+        action='store_true',
+        help='Required to write expectation files while running in portable validity mode.'
+    )
+    parser.add_argument(
         '--nsys-timeout-seconds',
         type=int,
         default=None,
@@ -9036,6 +9140,21 @@ def main():
     )
     
     args = parser.parse_args()
+    if getattr(args, "portable", False):
+        args.validity_profile = "portable"
+    if (
+        args.validity_profile == "portable"
+        and not bool(getattr(args, "allow_portable_expectations_update", False))
+        and (
+            bool(getattr(args, "update_expectations", False))
+            or bool(getattr(args, "accept_regressions", False))
+            or bool(getattr(args, "allow_mixed_provenance", False))
+        )
+    ):
+        logger.error(
+            "Portable mode does not write expectations unless --allow-portable-expectations-update is set."
+        )
+        sys.exit(1)
     # Keep "auto" aligned with the profile preset so `--profile minimal` stays fast.
     if getattr(args, "ncu_metric_set", None) == "auto" and getattr(args, "profile", None) in {
         "minimal",
@@ -9067,7 +9186,7 @@ def main():
     event_log_path = args.output.parent / "benchmark_events.jsonl"
     event_logger = BenchmarkEventLogger(event_log_path, event_run_id, logger)
     defaults = get_defaults() or BenchmarkDefaults()
-    gpu_state = get_gpu_state()
+    gpu_state = get_gpu_state(allow_telemetry_failures=args.validity_profile == "portable")
     emit_event(
         event_logger,
         logger,
@@ -9078,7 +9197,9 @@ def main():
         timeout_multiplier=args.timeout_multiplier,
         nsys_timeout_seconds=args.nsys_timeout_seconds,
         ncu_timeout_seconds=args.ncu_timeout_seconds,
+        validity_profile=args.validity_profile,
         update_expectations=args.update_expectations,
+        allow_portable_expectations_update=bool(args.allow_portable_expectations_update),
         allow_mixed_provenance=args.allow_mixed_provenance,
         output_json=str(args.output),
         events_file=str(event_log_path),
@@ -9188,6 +9309,8 @@ def main():
             iterations=args.iterations,
             warmup=args.warmup,
             only_examples=only_examples,
+            validity_profile=args.validity_profile,
+            allow_portable_expectations_update=bool(args.allow_portable_expectations_update),
             accept_regressions=args.accept_regressions if hasattr(args, "accept_regressions") else False,
             update_expectations=args.update_expectations if hasattr(args, "update_expectations") else False,
             allow_mixed_provenance=args.allow_mixed_provenance if hasattr(args, "allow_mixed_provenance") else False,

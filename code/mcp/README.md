@@ -50,6 +50,33 @@ Then poll `job_status` until complete and read:
 - `run_dir`, `results_json`, `analysis_json`
 - `benchmarks[]` entries, each with `profiles_dir` and `followup_tool_calls` (ready-to-run chaining inputs)
 
+### Validity flags (strict by default)
+
+All benchmark-oriented MCP tools now use the same validity contract as CLI:
+- `validity_profile`: `strict` (default) or `portable`
+- `allow_portable_expectations_update`: required when you want portable runs to write expectation files
+
+Strict example (default behavior):
+
+```json
+{
+  "targets": ["ch10:atomic_reduction"],
+  "profile": "minimal",
+  "validity_profile": "strict"
+}
+```
+
+Portable compatibility example:
+
+```json
+{
+  "targets": ["ch10:atomic_reduction"],
+  "profile": "minimal",
+  "validity_profile": "portable",
+  "allow_portable_expectations_update": true
+}
+```
+
 ### Manual chaining (explicit steps)
 
 1. Discover targets: `benchmark_targets`

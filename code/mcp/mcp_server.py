@@ -2441,21 +2441,29 @@ def tool_clock_lock_check(params: Dict[str, Any]) -> Dict[str, Any]:
                 "enum": ["kernel", "application"],
                 "default": "kernel",
             },
-            "allow_invalid_environment": {
+            "validity_profile": {
+                "type": "string",
+                "description": (
+                    "Benchmark validity mode: strict (default, fail-fast) or portable "
+                    "(explicit compatibility mode for hardware without full benchmark controls)."
+                ),
+                "enum": ["strict", "portable"],
+                "default": "strict",
+            },
+            "allow_portable_expectations_update": {
                 "type": "boolean",
                 "description": (
-                    "Allow running benchmarks even if validate_environment() reports errors. "
-                    "Still emits warnings; results may be invalid. Intended for unit tests and diagnostics."
+                    "Required to write expectations while running in portable validity mode. "
+                    "Without this flag, portable runs never modify expectation files."
                 ),
                 "default": False,
             },
-            "allow_virtualization": {
+            "accept_regressions": {
                 "type": "boolean",
                 "description": (
-                    "Allow running benchmarks in a virtualized environment (VM/hypervisor) by downgrading ONLY the "
-                    "virtualization check to a loud warning. Results are still invalid; bare metal is required."
+                    "Update expectation files when improvements are detected instead of flagging regressions."
                 ),
-                "default": True,
+                "default": False,
             },
             "allow_mixed_provenance": {
                 "type": "boolean",
@@ -2544,8 +2552,18 @@ def tool_run_benchmarks(params: Dict[str, Any]) -> Dict[str, Any]:
     ncu_timeout_seconds = params.get("ncu_timeout_seconds")
     ncu_metric_set = params.get("ncu_metric_set", "minimal")
     ncu_replay_mode = params.get("ncu_replay_mode", "kernel")
-    allow_invalid_environment = bool(params.get("allow_invalid_environment", False))
-    allow_virtualization = bool(params.get("allow_virtualization", True))
+    raw_validity_profile = params.get("validity_profile", "strict")
+    validity_profile = normalize_param("validity_profile", raw_validity_profile, "strict")
+    if validity_profile not in {"strict", "portable"}:
+        return {
+            "error": (
+                f"Invalid validity_profile '{raw_validity_profile}'. "
+                "Valid options: strict, portable."
+            ),
+            "success": False,
+        }
+    allow_portable_expectations_update = bool(params.get("allow_portable_expectations_update", False))
+    accept_regressions = bool(params.get("accept_regressions", False))
     allow_mixed_provenance = bool(params.get("allow_mixed_provenance", False))
     update_expectations = bool(params.get("update_expectations", False))
     only_python = bool(params.get("only_python", False))
@@ -2562,8 +2580,8 @@ def tool_run_benchmarks(params: Dict[str, Any]) -> Dict[str, Any]:
             profile = "none"
         if "only_python" not in params and "only_cuda" not in params:
             only_python = True
-        if "allow_virtualization" not in params:
-            allow_virtualization = True
+        if "validity_profile" not in params:
+            validity_profile = "portable"
     report_format = params.get("report_format", "html")
 
     # Validate profile value
@@ -2589,6 +2607,19 @@ def tool_run_benchmarks(params: Dict[str, Any]) -> Dict[str, Any]:
     if test_mode and (timeout_seconds is None or timeout_seconds <= 0):
         timeout_seconds = 600
     include_context, context_level = extract_context_opts(params)
+
+    if (
+        validity_profile == "portable"
+        and not allow_portable_expectations_update
+        and (update_expectations or accept_regressions or allow_mixed_provenance)
+    ):
+        return {
+            "error": (
+                "Portable mode does not write expectations unless "
+                "allow_portable_expectations_update=true is set."
+            ),
+            "success": False,
+        }
 
     if apply_patches and not (llm_analysis or force_llm):
         return {
@@ -2672,6 +2703,7 @@ def tool_run_benchmarks(params: Dict[str, Any]) -> Dict[str, Any]:
     cuda_check = _cuda_precheck()
 
     args: List[str] = ["run", "--profile", profile]
+    args.extend(["--validity-profile", str(validity_profile)])
     if artifacts_dir:
         args.extend(["--artifacts-dir", str(artifacts_dir)])
     if run_id:
@@ -2696,10 +2728,10 @@ def tool_run_benchmarks(params: Dict[str, Any]) -> Dict[str, Any]:
         args.extend(["--ncu-metric-set", str(ncu_metric_set)])
     if ncu_replay_mode is not None:
         args.extend(["--ncu-replay-mode", str(ncu_replay_mode)])
-    if allow_invalid_environment:
-        args.append("--allow-invalid-environment")
-    if allow_virtualization:
-        args.append("--allow-virtualization")
+    if allow_portable_expectations_update:
+        args.append("--allow-portable-expectations-update")
+    if accept_regressions:
+        args.append("--accept-regressions")
     if allow_mixed_provenance:
         args.append("--allow-mixed-provenance")
     if update_expectations:
@@ -2909,21 +2941,22 @@ def _benchmark_next_steps(result: Dict[str, Any]) -> List[Dict[str, Any]]:
                 "description": "Max runtime before returning with partial output; set 0/null for no timeout",
                 "default": 900,
             },
-            "allow_invalid_environment": {
+            "validity_profile": {
+                "type": "string",
+                "description": (
+                    "Benchmark validity mode: strict (default, fail-fast) or portable "
+                    "(explicit compatibility mode for hardware without full benchmark controls)."
+                ),
+                "enum": ["strict", "portable"],
+                "default": "strict",
+            },
+            "allow_portable_expectations_update": {
                 "type": "boolean",
                 "description": (
-                    "Allow running benchmarks even if validate_environment() reports errors. "
-                    "Still emits warnings; results may be invalid. Intended for unit tests and diagnostics."
+                    "Required to write expectations while running in portable validity mode. "
+                    "Without this flag, portable runs never modify expectation files."
                 ),
                 "default": False,
-            },
-            "allow_virtualization": {
-                "type": "boolean",
-                "description": (
-                    "Allow running benchmarks in a virtualized environment (VM/hypervisor) by downgrading ONLY the "
-                    "virtualization check to a loud warning. Results are still invalid; bare metal is required."
-                ),
-                "default": True,
             },
         }),
         "required": ["targets"],
@@ -2998,22 +3031,23 @@ def tool_benchmark_variants(params: Dict[str, Any]) -> Dict[str, Any]:
                     "description": "Max runtime for the full run+analysis; set 0/null for no timeout.",
                     "default": 0,
                 },
-                "allow_invalid_environment": {
+                "validity_profile": {
+                    "type": "string",
+                    "description": (
+                        "Benchmark validity mode: strict (default, fail-fast) or portable "
+                        "(explicit compatibility mode for hardware without full benchmark controls)."
+                    ),
+                    "enum": ["strict", "portable"],
+                    "default": "strict",
+                },
+                "allow_portable_expectations_update": {
                     "type": "boolean",
                     "description": (
-                        "Allow running benchmarks even if validate_environment() reports errors. "
-                        "Still emits warnings; results may be invalid. Intended for unit tests and diagnostics."
+                        "Required to write expectations while running in portable validity mode. "
+                        "Without this flag, portable runs never modify expectation files."
                     ),
                     "default": False,
                 },
-            "allow_virtualization": {
-                "type": "boolean",
-                "description": (
-                    "Allow running benchmarks in a virtualized environment (VM/hypervisor) by downgrading ONLY the "
-                    "virtualization check to a loud warning. Results are still invalid; bare metal is required."
-                ),
-                "default": True,
-            },
             }
         ),
         "required": [],
@@ -3040,8 +3074,17 @@ def tool_benchmark_deep_dive_compare(params: Dict[str, Any]) -> Dict[str, Any]:
         run_id = _default_run_id("deep-dive", run_label, base_dir)
     iterations = params.get("iterations", 1)
     warmup = params.get("warmup", 5)
-    allow_invalid_environment = bool(params.get("allow_invalid_environment", False))
-    allow_virtualization = bool(params.get("allow_virtualization", True))
+    raw_validity_profile = params.get("validity_profile", "strict")
+    validity_profile = normalize_param("validity_profile", raw_validity_profile, "strict")
+    if validity_profile not in {"strict", "portable"}:
+        return make_error(
+            f"Invalid validity_profile '{raw_validity_profile}'. Valid options: strict, portable.",
+            include_context,
+            context_level,
+        )
+    if _is_test_mode() and "validity_profile" not in params:
+        validity_profile = "portable"
+    allow_portable_expectations_update = bool(params.get("allow_portable_expectations_update", False))
     run_async = bool(params.get("async", False))
     timeout_param = params.get("timeout_seconds")
     timeout_seconds = None if timeout_param is None else int(timeout_param)
@@ -3114,16 +3157,18 @@ def tool_benchmark_deep_dive_compare(params: Dict[str, Any]) -> Dict[str, Any]:
             "run_id": run_id,
             "iterations": bench_iterations,
             "warmup": bench_warmup,
-            "allow_invalid_environment": allow_invalid_environment,
-            "allow_virtualization": allow_virtualization,
             # Explicitly disable LLM analysis; caller can run it separately if desired.
             "llm_analysis": False,
             "apply_patches": False,
             "timeout_seconds": bench_timeout,
             "only_python": bool(test_mode),
         }
-        if test_mode and "allow_virtualization" not in params:
-            bench_params["allow_virtualization"] = True
+        effective_validity_profile = validity_profile
+        if test_mode and "validity_profile" not in params:
+            effective_validity_profile = "portable"
+        bench_params["validity_profile"] = effective_validity_profile
+        if allow_portable_expectations_update:
+            bench_params["allow_portable_expectations_update"] = True
 
         bench_result = tool_run_benchmarks(bench_params)
         bench_result = _attach_bench_artifact_paths(bench_result)
@@ -3898,21 +3943,22 @@ def _resolve_baseline_wrapper_path(path: Path) -> Path:
                     "description": "Force-write observed metrics into expectation files (recommended).",
                     "default": True,
                 },
-                "allow_invalid_environment": {
+                "validity_profile": {
+                    "type": "string",
+                    "description": (
+                        "Benchmark validity mode: strict (default, fail-fast) or portable "
+                        "(explicit compatibility mode for hardware without full benchmark controls)."
+                    ),
+                    "enum": ["strict", "portable"],
+                    "default": "strict",
+                },
+                "allow_portable_expectations_update": {
                     "type": "boolean",
                     "description": (
-                        "Allow running benchmarks even if validate_environment() reports errors. "
-                        "Still emits warnings; results may be invalid. Intended for diagnostics only."
+                        "Required to write expectations while running in portable validity mode. "
+                        "Without this flag, portable runs never modify expectation files."
                     ),
                     "default": False,
-                },
-                "allow_virtualization": {
-                    "type": "boolean",
-                    "description": (
-                        "Allow running in a virtualized environment (VM/hypervisor) by downgrading ONLY the "
-                        "virtualization check to a loud warning. Results are still invalid; bare metal is required."
-                    ),
-                    "default": True,
                 },
                 "async": {
                     "type": "boolean",
@@ -3940,6 +3986,17 @@ def tool_benchmark_explore(params: Dict[str, Any]) -> Dict[str, Any]:
     if not run_id:
         label = f"explore-{Path(path).stem}"
         run_id = _default_run_id("explore", label, base_dir)
+    raw_validity_profile = params.get("validity_profile", "strict")
+    validity_profile = normalize_param("validity_profile", raw_validity_profile, "strict")
+    if validity_profile not in {"strict", "portable"}:
+        return make_error(
+            f"Invalid validity_profile '{raw_validity_profile}'. Valid options: strict, portable.",
+            include_context,
+            context_level,
+        )
+    if _is_test_mode() and "validity_profile" not in params:
+        validity_profile = "portable"
+    allow_portable_expectations_update = bool(params.get("allow_portable_expectations_update", False))
 
     progress_path = _progress_path_in_dir(base_dir, str(run_id))
     progress_recorder = ProgressRecorder(run_id=str(run_id), progress_path=progress_path)
@@ -3960,6 +4017,10 @@ def tool_benchmark_explore(params: Dict[str, Any]) -> Dict[str, Any]:
     def _run() -> Dict[str, Any]:
         from core.discovery import chapter_slug, get_bench_roots
         from core.harness.run_benchmarks import check_nsys_available, check_ncu_available
+        test_mode = _is_test_mode()
+        effective_validity_profile = validity_profile
+        if test_mode and "validity_profile" not in params:
+            effective_validity_profile = "portable"
 
         _emit("copy", "starting copy", 2.0)
         baseline_path = Path(path)
@@ -3999,10 +4060,11 @@ def tool_benchmark_explore(params: Dict[str, Any]) -> Dict[str, Any]:
             "apply_patches": True,
             "rebenchmark_llm_patches": True,
             "llm_explain": False,
-            "allow_invalid_environment": bool(params.get("allow_invalid_environment", False)),
-            "allow_virtualization": bool(params.get("allow_virtualization", True)),
+            "validity_profile": effective_validity_profile,
             "update_expectations": bool(params.get("update_expectations", True)),
         }
+        if allow_portable_expectations_update:
+            minimal_params["allow_portable_expectations_update"] = True
         minimal_result = tool_run_benchmarks(minimal_params)
         minimal_result = _normalize_result(minimal_result)
         if minimal_result.get("success") is False:
@@ -4105,10 +4167,11 @@ def tool_benchmark_explore(params: Dict[str, Any]) -> Dict[str, Any]:
                 "apply_patches": True,
                 "rebenchmark_llm_patches": True,
                 "llm_explain": False,
-                "allow_invalid_environment": bool(params.get("allow_invalid_environment", False)),
-                "allow_virtualization": bool(params.get("allow_virtualization", True)),
+                "validity_profile": effective_validity_profile,
                 "update_expectations": bool(params.get("update_expectations", True)),
             }
+            if allow_portable_expectations_update:
+                deep_params["allow_portable_expectations_update"] = True
             deep_dive_result = tool_run_benchmarks(deep_params)
             deep_dive_result = _normalize_result(deep_dive_result)
             if deep_dive_result.get("success") is False:
@@ -4327,22 +4390,23 @@ def _extract_promoted_targets(results_json: Path) -> List[Dict[str, Any]]:
                     "description": "Max runtime for the full loop; set 0/null for no timeout.",
                     "default": 0,
                 },
-                "allow_invalid_environment": {
+                "validity_profile": {
+                    "type": "string",
+                    "description": (
+                        "Benchmark validity mode: strict (default, fail-fast) or portable "
+                        "(explicit compatibility mode for hardware without full benchmark controls)."
+                    ),
+                    "enum": ["strict", "portable"],
+                    "default": "strict",
+                },
+                "allow_portable_expectations_update": {
                     "type": "boolean",
                     "description": (
-                        "Allow running benchmarks even if validate_environment() reports errors. "
-                        "Still emits warnings; results may be invalid. Intended for unit tests and diagnostics."
+                        "Required to write expectations while running in portable validity mode. "
+                        "Without this flag, portable runs never modify expectation files."
                     ),
                     "default": False,
                 },
-            "allow_virtualization": {
-                "type": "boolean",
-                "description": (
-                    "Allow running benchmarks in a virtualized environment (VM/hypervisor) by downgrading ONLY the "
-                    "virtualization check to a loud warning. Results are still invalid; bare metal is required."
-                ),
-                "default": True,
-            },
             }
         ),
         "required": ["targets"],
@@ -4362,8 +4426,17 @@ def tool_benchmark_llm_patch_loop(params: Dict[str, Any]) -> Dict[str, Any]:
     compare_warmup = params.get("compare_warmup", 5)
     force_llm = bool(params.get("force_llm", True))
     llm_explain = bool(params.get("llm_explain", True))
-    allow_invalid_environment = bool(params.get("allow_invalid_environment", False))
-    allow_virtualization = bool(params.get("allow_virtualization", True))
+    raw_validity_profile = params.get("validity_profile", "strict")
+    validity_profile = normalize_param("validity_profile", raw_validity_profile, "strict")
+    if validity_profile not in {"strict", "portable"}:
+        return make_error(
+            f"Invalid validity_profile '{raw_validity_profile}'. Valid options: strict, portable.",
+            include_context,
+            context_level,
+        )
+    if _is_test_mode() and "validity_profile" not in params:
+        validity_profile = "portable"
+    allow_portable_expectations_update = bool(params.get("allow_portable_expectations_update", False))
     run_async = bool(params.get("async", False))
     timeout_param = params.get("timeout_seconds")
     timeout_seconds = None if timeout_param is None else int(timeout_param)
@@ -4380,10 +4453,11 @@ def tool_benchmark_llm_patch_loop(params: Dict[str, Any]) -> Dict[str, Any]:
             "apply_patches": True,
             "rebenchmark_llm_patches": True,
             "llm_explain": llm_explain,
-            "allow_invalid_environment": allow_invalid_environment,
-            "allow_virtualization": allow_virtualization,
+            "validity_profile": validity_profile,
             "timeout_seconds": timeout_seconds,
         }
+        if allow_portable_expectations_update:
+            bench_params["allow_portable_expectations_update"] = True
 
         bench_result = tool_run_benchmarks(bench_params)
         bench_result = _attach_bench_artifact_paths(bench_result)
@@ -4424,10 +4498,11 @@ def tool_benchmark_llm_patch_loop(params: Dict[str, Any]) -> Dict[str, Any]:
                 "output_dir": compare_output_dir,
                 "iterations": compare_iterations,
                 "warmup": compare_warmup,
-                "allow_invalid_environment": allow_invalid_environment,
-                "allow_virtualization": allow_virtualization,
+                "validity_profile": validity_profile,
                 "timeout_seconds": timeout_seconds,
             }
+            if allow_portable_expectations_update:
+                compare_params["allow_portable_expectations_update"] = True
             compare_result = tool_benchmark_deep_dive_compare(compare_params)
             if not isinstance(compare_result, dict):
                 compare_runs.append(
@@ -5285,21 +5360,22 @@ def tool_analyze_whatif(params: Dict[str, Any]) -> Dict[str, Any]:
                 "description": "Max runtime before returning with partial output; set 0/null for no timeout",
                 "default": 900,
             },
-            "allow_invalid_environment": {
+            "validity_profile": {
+                "type": "string",
+                "description": (
+                    "Benchmark validity mode: strict (default, fail-fast) or portable "
+                    "(explicit compatibility mode for hardware without full benchmark controls)."
+                ),
+                "enum": ["strict", "portable"],
+                "default": "strict",
+            },
+            "allow_portable_expectations_update": {
                 "type": "boolean",
                 "description": (
-                    "Allow running benchmarks even if validate_environment() reports errors. "
-                    "Still emits warnings; results may be invalid. Intended for unit tests and diagnostics."
+                    "Required to write expectations while running in portable validity mode. "
+                    "Without this flag, portable runs never modify expectation files."
                 ),
                 "default": False,
-            },
-            "allow_virtualization": {
-                "type": "boolean",
-                "description": (
-                    "Allow running benchmarks in a virtualized environment (VM/hypervisor) by downgrading ONLY the "
-                    "virtualization check to a loud warning. Results are still invalid; bare metal is required."
-                ),
-                "default": True,
             },
         }),
     },

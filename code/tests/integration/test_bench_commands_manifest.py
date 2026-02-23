@@ -96,6 +96,7 @@ def test_bench_commands_writes_manifest(tmp_path: Path) -> None:
         bench_root=bench_root,
         output_format="json",
         profile_type="none",
+        validity_profile="portable",
         iterations=5,
         warmup=5,
         single_gpu=True,

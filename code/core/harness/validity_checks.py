@@ -592,7 +592,7 @@ def validate_environment(
     *,
     device: Optional["torch.device"] = None,
     probe: Optional[EnvironmentProbe] = None,
-    allow_virtualization: bool = True,
+    allow_virtualization: bool = False,
 ) -> EnvironmentValidationResult:
     """Validate benchmark environment is suitable (fail-fast on known invalid states)."""
     probe = probe or EnvironmentProbe()

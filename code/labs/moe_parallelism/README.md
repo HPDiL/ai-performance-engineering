@@ -23,6 +23,8 @@ python -m cli.aisp bench run --targets labs/moe_parallelism --profile minimal
 ```
 - Targets follow the `labs/moe_parallelism:<workload>` naming convention listed by `list-targets`.
 - Use `--target-extra-arg labs/moe_parallelism:<workload>="--flag value"` to sweep schedule knobs.
+- Validity defaults to strict mode. Use `--validity-profile portable` (or `--portable`) only when strict mode fails on unsupported hardware controls.
+- Portable runs do not write expectation files unless `--allow-portable-expectations-update` is also provided.
 
 ## Validation Checklist
 - `python -m cli.aisp tools moe-parallelism -- --scenario memory_budget` runs a single scenario via the tool registry.

@@ -90,7 +90,9 @@ class BenchmarkDefaults:
     enable_proton: bool = False
     # Always emit NVTX ranges when profiling is active (can be overridden per-run).
     enable_nvtx: Optional[bool] = True
-    allow_virtualization: bool = True
+    # Validity profile defaults to strict fail-fast benchmarking.
+    validity_profile: str = "strict"  # strict | portable
+    allow_virtualization: bool = False
     # Free allocator state between benchmarks by default.
     enable_cleanup: bool = True
     # Lock GPU clocks by default for consistent benchmarking.
@@ -181,6 +183,7 @@ class BenchmarkDefaults:
             "enable_ncu": self.enable_ncu,
             "enable_proton": self.enable_proton,
             "enable_nvtx": self.enable_nvtx,
+            "validity_profile": self.validity_profile,
             "allow_virtualization": self.allow_virtualization,
             "enable_cleanup": self.enable_cleanup,
             "lock_gpu_clocks": self.lock_gpu_clocks,
