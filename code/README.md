@@ -58,12 +58,17 @@ supported only on bare metal.
 | Year | Incident | Issue Type | What Happened | Source |
 | --- | --- | --- | --- | --- |
 | 2025 | Locus/KernelBench Stream Exploit | Unsynced Streams | Claimed 20x speedup on Llama FFW kernel. AI launched work on non-default CUDA streams but timer only measured default stream. 32.8 percent of RL-generated kernels exploited this, causing fake 18x speedups. | https://x.com/miru_why/status/1991773868806361138 |
+| 2025 | Preference Leakage in LLM-as-a-Judge | Evaluation Integrity / Judge Contamination | Study shows judge models are biased toward related student models (same model, inheritance, or family), contaminating evaluation outcomes. | https://arxiv.org/abs/2502.01534 |
+| 2025 | LessLeak-Bench (SE Benchmarks) | Data Contamination / Leakage | Large-scale study across 83 software engineering benchmarks finds leakage is usually low overall but severe in specific benchmarks (for example, QuixBugs and BigCloneBench), materially affecting measured performance. | https://arxiv.org/abs/2502.06215 |
 | 2025 | Measuring What Matters: Construct Validity in LLM Benchmarks | Metric Definition Gaming / Construct Validity | Systematic review of 445 LLM benchmarks found construct-validity weaknesses and low statistical rigor; issued eight design recommendations. | https://ora.ox.ac.uk/objects/uuid%3Aad2b69b6-0986-42d0-a512-a6e56338b6cc |
 | 2025 | Medical LLM Benchmarks and Construct Validity | Metric Definition Gaming / Construct Validity | Position paper argues exam-style medical LLM benchmarks miss real-world tasks and documents construct-validity gaps using clinical data. | https://arxiv.org/abs/2503.10694 |
 | 2025 | Sakana AI Scientist Evaluation | Evaluation Integrity | Independent evaluation found frequent experiment failures and hallucinated numerical results. | https://arxiv.org/abs/2502.14297 |
 | 2025 | Leaderboard Illusion (Chatbot Arena) | Cherry-picking | Analysis of Chatbot Arena reports selection effects and leaderboard instability when submissions are inconsistent or selectively disclosed. | https://arxiv.org/abs/2504.20879 |
+| 2024 | Benchmarking Benchmark Leakage in LLMs (Math Reasoning) | Data Contamination / Leakage | Analysis of 31 LLMs in mathematical reasoning reports substantial benchmark leakage and potential test-set misuse, with recommendations for benchmark transparency cards. | https://arxiv.org/abs/2404.18824 |
 | 2024 | MMLU Benchmark Errors | Invalid Ground Truth | Analysis found 57 percent of MMLU virology subset questions incorrect and estimated 6.49 percent errors overall. | https://arxiv.org/abs/2406.04127 |
 | 2024 | AI Agent Benchmark Shortcuts | Missing Holdout Sets | Study found AI agents memorize benchmark test samples instead of learning to generalize. Many benchmarks lack proper holdout test sets. | https://arxiv.org/abs/2407.01502 |
+| 2024 | Investigating Data Contamination in Modern LLM Benchmarks | Data Contamination / Leakage | NAACL long paper introduces retrieval-based overlap checks and TS-Guessing to detect contamination signals in modern benchmarks across open and proprietary models. | https://aclanthology.org/2024.naacl-long.482/; https://arxiv.org/abs/2311.09783 |
+| 2024 | MMLU-CF (Contamination-Free MMLU) | Data Contamination / Leakage | Proposes a contamination-resistant MMLU variant with closed test split and decontamination rules to reduce unintentional and malicious leakage. | https://arxiv.org/abs/2412.15194; https://github.com/microsoft/MMLU-CF |
 | 2024 | NaturalCodeBench vs HumanEval | Benchmark Overfitting | Real-user coding tasks in NaturalCodeBench show large performance gaps and weak correlation with HumanEval scores. | https://aclanthology.org/2024.findings-acl.471/ |
 | 2024 | Benchmark Data Contamination Survey | Data Contamination | Survey catalogs contamination pathways across LLM benchmarks and highlights mitigation gaps. | https://arxiv.org/abs/2406.04244 |
 | 2023 | NLP Evaluation Data Contamination | Data Contamination | Position paper warns that LLMs trained on benchmark test splits can inflate reported scores. | https://arxiv.org/abs/2310.18018 |
@@ -86,13 +91,13 @@ supported only on bare metal.
 | Timing Manipulation | 1 (Locus/KernelBench) | Full device sync + StreamAuditor | OK |
 | Invalid Ground Truth | 2 (ImageNet Labels, MMLU) | GoldenOutputCache + validate_result | OK |
 | Benchmark Overfitting | 4 (Underspecification, Epic Sepsis, NaturalCodeBench, Berkeley) | Fresh-input checks + jitter | OK |
-| Data Contamination | 2 (LLM Survey 2024, NLP Contamination 2023) | Data contamination checks + fresh inputs | OK |
+| Data Contamination | 6 (Benchmark Leakage 2024, NAACL 2024, MMLU-CF, LessLeak-Bench, LLM Survey 2024, NLP Contamination 2023) | Data contamination checks + fresh inputs + held-out evaluation data | OK |
 | Metric Gaming | 4 (Measuring What Matters 2025, Medical LLM Benchmarks 2025, HANS 2019, MLPerf 2019) | Standardized metric definitions | OK |
 | Cherry-picking | 2 (Leaderboard Illusion, MLPerf 2022) | All-iteration reporting | OK |
 | Train/Test Overlap | 1 (Computational Biology) | Dataset isolation + holdout enforcement | OK |
 | Missing Holdout Sets | 2 (AI Agent Shortcuts, Microsoft Tay) | Held-out evaluation data | OK |
 | Reproducibility | 1 (MLPerf 2021) | RunManifest version locking | OK |
-| Evaluation Integrity | 1 (Sakana AI Scientist) | BenchmarkContract + verification enforcement | OK |
+| Evaluation Integrity | 2 (Sakana AI Scientist, Preference Leakage 2025) | BenchmarkContract + verification enforcement | OK |
 | Precision Policy Drift | 1 (TF32 Default) | Backend policy immutability check | OK |
 
 ### How We Detect and Prevent These Failures (Notes)
@@ -102,6 +107,8 @@ supported only on bare metal.
 - Environment reproducibility is enforced by hardware/software manifest checks, clock locking, and bare-metal validation.
 - Statistical integrity is enforced with all-iteration reporting, fixed policies for percentiles/sampling, and process isolation.
 - Evaluation integrity is enforced with benchmark contracts, contamination checks, holdout requirements, and anti-memorization checks.
+- Scope note: Some incidents above are model-evaluation contamination/leakage cases (not kernel timing bugs). They are included because they represent the same failure class: inflated scores from invalid evaluation setup.
+- Limits note: For closed/proprietary model pipelines, no benchmark harness can directly prove zero pretraining contamination. Our controls reduce risk (fresh inputs, jitter, held-out data, contamination checks) but are not a cryptographic guarantee.
 
 ### Full Validity Issue Reference (95 Checks)
 
