@@ -9,7 +9,7 @@ Finish the remaining work with minimal-only profiling runs: tcgen05 validation, 
 - Queue runner is running the minimal-only sequence.
 - tcgen05 functional check passed for warp_specialized / warp_specialized_cutlass / warpgroup_specialized (N>=2048).
 - MCP tool selection hints and dashboard API mappings verified.
-- allow_virtualization is now enabled by default (CLI + harness) to avoid hypervisor failures.
+- Benchmark validity defaults are strict (`--validity-profile strict`); use portable mode explicitly for compatibility runs.
 
 ## Remaining
 1. Queue minimal tcgen05 benchmarks for the three targets with --update-expectations.
