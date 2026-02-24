@@ -69,13 +69,85 @@ def _select_kernel_variant() -> tuple[str, str]:
     kernel_variant = _env_str("AISP_NVFP4_GROUP_GEMM_V2_KERNEL_VARIANT", "").lower()
     if kernel_variant in {"legacy", "legacy_main"}:
         return "custom_cuda_group_gemm_kernel.cu", "__legacy_main"
+    if kernel_variant in {"8cb0", "best_8cb0"}:
+        return "custom_cuda_group_gemm_kernel_8cb0.cu", "__8cb0"
     if kernel_variant in {"fb5", "fb5adb45"}:
         return "custom_cuda_group_gemm_kernel_fb5adb45.cu", "__fb5adb45"
     if kernel_variant in {"", "main", "default", "stable", "cta2_stable"}:
         return "custom_cuda_group_gemm_kernel_cta2_stable.cu", "__cta2_mode1_stable"
     raise ValueError(
         f"Unsupported AISP_NVFP4_GROUP_GEMM_V2_KERNEL_VARIANT={kernel_variant!r}. "
-        "Use one of: main/default/stable/cta2_stable, legacy/legacy_main, fb5/fb5adb45."
+        "Use one of: main/default/stable/cta2_stable, legacy/legacy_main, 8cb0/best_8cb0, fb5/fb5adb45."
+    )
+
+
+def _active_kernel_variant_token() -> str:
+    return _env_str("AISP_NVFP4_GROUP_GEMM_V2_KERNEL_VARIANT", "").strip().lower()
+
+
+def _build_ab_tma_descs_compat(
+    ext: object,
+    a_ptrs_cpu: list[int],
+    b_ptrs_cpu: list[int],
+    m_sizes_tma: list[int],
+    n_sizes_tma_ab: list[int],
+    k_halves: list[int],
+    a_box_height: int,
+    b_box_height: int,
+):
+    fn = ext.nvfp4_group_gemm_v2_build_ab_tma_descs_cuda
+    variant = _active_kernel_variant_token()
+    # fb5 exposes the older 6-arg descriptor builder ABI (single box-height argument).
+    if variant in {"fb5", "fb5adb45"}:
+        return fn(
+            torch.tensor(a_ptrs_cpu, dtype=torch.int64, device="cpu").contiguous(),
+            torch.tensor(b_ptrs_cpu, dtype=torch.int64, device="cpu").contiguous(),
+            torch.tensor(m_sizes_tma, dtype=torch.int32, device="cpu").contiguous(),
+            torch.tensor(n_sizes_tma_ab, dtype=torch.int32, device="cpu").contiguous(),
+            torch.tensor(k_halves, dtype=torch.int32, device="cpu").contiguous(),
+            int(b_box_height),
+        )
+    return fn(
+        torch.tensor(a_ptrs_cpu, dtype=torch.int64, device="cpu").contiguous(),
+        torch.tensor(b_ptrs_cpu, dtype=torch.int64, device="cpu").contiguous(),
+        torch.tensor(m_sizes_tma, dtype=torch.int32, device="cpu").contiguous(),
+        torch.tensor(n_sizes_tma_ab, dtype=torch.int32, device="cpu").contiguous(),
+        torch.tensor(k_halves, dtype=torch.int32, device="cpu").contiguous(),
+        int(a_box_height),
+        int(b_box_height),
+    )
+
+
+def _build_scale_tma_descs_compat(
+    ext: object,
+    sfa_ptrs_cpu: list[int],
+    sfb_ptrs_cpu: list[int],
+    m_sizes_tma: list[int],
+    n_sizes_tma_sf: list[int],
+    k_halves: list[int],
+    sfa_box_height: int,
+    sfb_box_height: int,
+):
+    fn = ext.nvfp4_group_gemm_v2_build_scale_tma_descs_cuda
+    variant = _active_kernel_variant_token()
+    # fb5 exposes the older 6-arg descriptor builder ABI (single box-height argument).
+    if variant in {"fb5", "fb5adb45"}:
+        return fn(
+            torch.tensor(sfa_ptrs_cpu, dtype=torch.int64, device="cpu").contiguous(),
+            torch.tensor(sfb_ptrs_cpu, dtype=torch.int64, device="cpu").contiguous(),
+            torch.tensor(m_sizes_tma, dtype=torch.int32, device="cpu").contiguous(),
+            torch.tensor(n_sizes_tma_sf, dtype=torch.int32, device="cpu").contiguous(),
+            torch.tensor(k_halves, dtype=torch.int32, device="cpu").contiguous(),
+            int(sfb_box_height),
+        )
+    return fn(
+        torch.tensor(sfa_ptrs_cpu, dtype=torch.int64, device="cpu").contiguous(),
+        torch.tensor(sfb_ptrs_cpu, dtype=torch.int64, device="cpu").contiguous(),
+        torch.tensor(m_sizes_tma, dtype=torch.int32, device="cpu").contiguous(),
+        torch.tensor(n_sizes_tma_sf, dtype=torch.int32, device="cpu").contiguous(),
+        torch.tensor(k_halves, dtype=torch.int32, device="cpu").contiguous(),
+        int(sfa_box_height),
+        int(sfb_box_height),
     )
 
 
@@ -756,14 +828,15 @@ def prepare_v2_custom_cuda_tcgen05(data_list: Sequence[input_t]) -> Optional[Seq
             b_box_height = 128
         # cta_group::2 uses a 64-row A tile per CTA (cluster tile M=128). cta_group::1 uses 128.
         a_box_height = 64 if use_cta2 else 128
-        a_descs, b_descs = ext.nvfp4_group_gemm_v2_build_ab_tma_descs_cuda(
-            torch.tensor(a_ptrs_cpu, dtype=torch.int64, device="cpu").contiguous(),
-            torch.tensor(b_ptrs_cpu, dtype=torch.int64, device="cpu").contiguous(),
-            torch.tensor(m_sizes_tma, dtype=torch.int32, device="cpu").contiguous(),
-            torch.tensor(n_sizes_tma_ab, dtype=torch.int32, device="cpu").contiguous(),
-            torch.tensor(k_halves, dtype=torch.int32, device="cpu").contiguous(),
-            int(a_box_height),
-            int(b_box_height),
+        a_descs, b_descs = _build_ab_tma_descs_compat(
+            ext=ext,
+            a_ptrs_cpu=a_ptrs_cpu,
+            b_ptrs_cpu=b_ptrs_cpu,
+            m_sizes_tma=m_sizes_tma,
+            n_sizes_tma_ab=n_sizes_tma_ab,
+            k_halves=k_halves,
+            a_box_height=int(a_box_height),
+            b_box_height=int(b_box_height),
         )
         # Scale-factor tensor maps:
         # SFA remains 128-row in all modes.
@@ -778,14 +851,15 @@ def prepare_v2_custom_cuda_tcgen05(data_list: Sequence[input_t]) -> Optional[Seq
         sfb_box_height_override = _env_int("AISP_NVFP4_GROUP_GEMM_V2_CTA2_SFB_BOX_HEIGHT_OVERRIDE", 0)
         if sfb_box_height_override > 0:
             sfb_box_height = int(sfb_box_height_override)
-        sfa_descs, sfb_descs = ext.nvfp4_group_gemm_v2_build_scale_tma_descs_cuda(
-            torch.tensor(sfa_ptrs_cpu, dtype=torch.int64, device="cpu").contiguous(),
-            torch.tensor(sfb_ptrs_cpu, dtype=torch.int64, device="cpu").contiguous(),
-            torch.tensor(m_sizes_tma, dtype=torch.int32, device="cpu").contiguous(),
-            torch.tensor(n_sizes_tma_sf, dtype=torch.int32, device="cpu").contiguous(),
-            torch.tensor(k_halves, dtype=torch.int32, device="cpu").contiguous(),
-            int(sfa_box_height),
-            int(sfb_box_height),
+        sfa_descs, sfb_descs = _build_scale_tma_descs_compat(
+            ext=ext,
+            sfa_ptrs_cpu=sfa_ptrs_cpu,
+            sfb_ptrs_cpu=sfb_ptrs_cpu,
+            m_sizes_tma=m_sizes_tma,
+            n_sizes_tma_sf=n_sizes_tma_sf,
+            k_halves=k_halves,
+            sfa_box_height=int(sfa_box_height),
+            sfb_box_height=int(sfb_box_height),
         )
 
         grouped_ctx = {
@@ -823,6 +897,7 @@ def prepare_v2_custom_cuda_tcgen05(data_list: Sequence[input_t]) -> Optional[Seq
     # grouped tcgen05 launch. Workload is unchanged (same requests and same tensors), but
     # per-iteration launch overhead is reduced by issuing one large grouped kernel.
     if _env_flag("AISP_NVFP4_GROUP_GEMM_V2_FUSE_INPUTS", 0) and len(prepared) > 1:
+        compress_fused_inputs = _env_flag("AISP_NVFP4_GROUP_GEMM_V2_FUSE_INPUTS_COMPRESS_LIST", 0)
         grouped_ctxs = [entry[4]["grouped_ctx"] for entry in prepared]
         cat_keys = (
             "a_ptrs",
@@ -859,6 +934,14 @@ def prepare_v2_custom_cuda_tcgen05(data_list: Sequence[input_t]) -> Optional[Seq
             ctx = entry[4]
             ctx["fused_grouped_ctx"] = fused_grouped_ctx
             ctx["fused_input_idx"] = int(fused_input_idx)
+
+        if compress_fused_inputs:
+            # Optional host-overhead reduction: keep only one logical callsite when fused mode is enabled.
+            # The single fused launch still executes all original requests in the same iteration.
+            # Keep strong references for all fused slots so pointer-backed tensors remain alive.
+            primary_ctx = prepared[0][4]
+            primary_ctx["fused_keepalive_ctxs"] = [entry[4] for entry in prepared]
+            return [prepared[0]]
 
     return prepared
 

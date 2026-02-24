@@ -1371,7 +1371,14 @@ static std::pair<torch::Tensor, torch::Tensor> build_scale_tma_descs_cuda(
 
 namespace cuda_device = cuda::device::experimental;
 
-template <int CtaGroup, int UnrollN, int CtaTileM, bool EnableTmaMulticast>
+template <
+    int CtaGroup,
+    int UnrollN,
+    int CtaTileM,
+    bool EnableTmaMulticast,
+    bool AssumeNoNTail = false,
+    bool AssumeRowsAligned32 = false,
+    bool UseCase2InlineTmMajorMap = false>
 __global__ void nvfp4_group_gemm_v2_tcgen05_kernel(
     const uint64_t* __restrict__ a_ptrs,
     const uint64_t* __restrict__ b_ptrs,
@@ -1519,7 +1526,29 @@ __global__ void nvfp4_group_gemm_v2_tcgen05_kernel(
   cg::cluster_group cluster = cg::this_cluster();
   int tile_n = 0;
   int tile_m = 0;
-  if (cta_group_idx_map != nullptr && cta_tile_m_map != nullptr && cta_tile_n_map != nullptr) {
+  if constexpr (UseCase2InlineTmMajorMap && (CtaGroup == 1) && (UnrollN == 2)) {
+    // Case2-only packed CTA map in tm_major order, inlined to avoid per-CTA global map loads:
+    // group0: M=192 -> 2 M-tiles, group1: M=320 -> 3 M-tiles, N=3072 -> 12 unroll2 CTA columns.
+    constexpr int kCase2PairsPerMTile = 12;
+    constexpr int kCase2Group0MTiles = 2;
+    constexpr int kCase2Group0Ctas = kCase2PairsPerMTile * kCase2Group0MTiles;  // 24
+    constexpr int kCase2TotalCtas = 60;  // (2 + 3) * 12
+    const int cta_linear = static_cast<int>(blockIdx.x);
+    if (cta_linear >= kCase2TotalCtas) {
+      return;
+    }
+    if (cta_linear < kCase2Group0Ctas) {
+      group_idx = 0;
+      const int local = cta_linear;
+      tile_m = local / kCase2PairsPerMTile;
+      tile_n = (local % kCase2PairsPerMTile) * UnrollN;
+    } else {
+      group_idx = 1;
+      const int local = cta_linear - kCase2Group0Ctas;
+      tile_m = local / kCase2PairsPerMTile;
+      tile_n = (local % kCase2PairsPerMTile) * UnrollN;
+    }
+  } else if (cta_group_idx_map != nullptr && cta_tile_m_map != nullptr && cta_tile_n_map != nullptr) {
     // Packed-CTA mode: the host launches exactly the required CTAs per group (no early-return CTAs).
     // Use grid.x as the linear CTA dimension for both cluster and non-cluster launches.
     // This avoids the grid.z <= 65535 limit on large fused launches.
@@ -1544,7 +1573,17 @@ __global__ void nvfp4_group_gemm_v2_tcgen05_kernel(
   const int k_bytes_total = k_halves[group_idx];
   const int k_tiles_total = ceil_div_int(k_bytes_total, K_TILE_BYTES);
   const int n_tiles_group = ceil_div_int(n_size, TILE_N);
-  const bool ws_u1_active = WS_UNROLL2_MMA && ((tile_n + 1) < n_tiles_group);
+  constexpr bool ASSUME_NO_N_TAIL = AssumeNoNTail && (CtaGroup == 1) && (UnrollN == 2);
+  constexpr bool ASSUME_ROWS_ALIGNED32 = AssumeRowsAligned32 && (CtaGroup == 1) && (UnrollN == 2);
+  auto u_in_bounds = [&](int u) {
+    if constexpr (ASSUME_NO_N_TAIL) {
+      (void)u;
+      return true;
+    } else {
+      return (tile_n + u) < n_tiles_group;
+    }
+  };
+  const bool ws_u1_active = WS_UNROLL2_MMA && u_in_bounds(1);
   // cta_group::2 bring-up:
   // For UnrollN=2 we currently keep B/SFB duplicated across the two CTAs to avoid
   // any N/2 partitioning complexity while scale/TMEM layouts are still being tuned.
@@ -2073,7 +2112,7 @@ __global__ void nvfp4_group_gemm_v2_tcgen05_kernel(
         int unroll_n_valid = 0;
 #pragma unroll
 	        for (int u = 0; u < UnrollN; ++u) {
-	          if ((tile_n + u) < n_tiles_group) {
+	          if (u_in_bounds(u)) {
 	            ++unroll_n_valid;
 	          }
 	        }
@@ -2107,7 +2146,7 @@ __global__ void nvfp4_group_gemm_v2_tcgen05_kernel(
 	      int unroll_n_valid = 0;
 #pragma unroll
 	      for (int u = 0; u < UnrollN; ++u) {
-	        if ((tile_n + u) < n_tiles_group) {
+	        if (u_in_bounds(u)) {
 	          ++unroll_n_valid;
 	        }
 	      }
@@ -2146,7 +2185,7 @@ __global__ void nvfp4_group_gemm_v2_tcgen05_kernel(
 	      } else {
 #pragma unroll
 	        for (int u = 0; u < UnrollN; ++u) {
-	          if ((tile_n + u) >= n_tiles_group) {
+	          if (!u_in_bounds(u)) {
 	            continue;
 	          }
 	          const int b_n_offset = b_n_offset_base + u * TILE_N;
@@ -2230,7 +2269,7 @@ __global__ void nvfp4_group_gemm_v2_tcgen05_kernel(
 	        } else {
 #pragma unroll
 	          for (int u = 0; u < UnrollN; ++u) {
-	            if ((tile_n + u) >= n_tiles_group) {
+	            if (!u_in_bounds(u)) {
 	              continue;
 	            }
 	            const int b_n_offset = b_n_offset_base + u * TILE_N;
@@ -2261,7 +2300,7 @@ __global__ void nvfp4_group_gemm_v2_tcgen05_kernel(
 	    } else {
 #pragma unroll
 	      for (int u = 0; u < UnrollN; ++u) {
-	        if ((tile_n + u) >= n_tiles_group) {
+	        if (!u_in_bounds(u)) {
 	          continue;
 	        }
 	        const int b_n_offset = b_n_offset_base + u * TILE_N;
@@ -2353,7 +2392,7 @@ __global__ void nvfp4_group_gemm_v2_tcgen05_kernel(
             const uint64_t desc_sfa_base = static_cast<uint64_t>(desc_sfa[0]) + cta2_desc_sfa_row_offset;
             copy_scale_fragments(desc_sfa_base, tmem_sfa_ptrs, /*is_sfb=*/false);
             for (int u = 0; u < UnrollN; ++u) {
-              if ((tile_n + u) >= n_tiles_group) {
+              if (!u_in_bounds(u)) {
                 continue;
               }
               const uint64_t desc_sfb_base = static_cast<uint64_t>(desc_sfb[0][u]);
@@ -2411,7 +2450,7 @@ __global__ void nvfp4_group_gemm_v2_tcgen05_kernel(
 		            if (lane == 0) {
 #pragma unroll
 		              for (int u = 0; u < UnrollN; ++u) {
-		                if ((tile_n + u) >= n_tiles_group) {
+		                if (!u_in_bounds(u)) {
 		                  continue;
 		                }
 #pragma unroll
@@ -2438,7 +2477,7 @@ __global__ void nvfp4_group_gemm_v2_tcgen05_kernel(
 		            if (threadIdx.x == 0) {
 #pragma unroll
 	            for (int u = 0; u < UnrollN; ++u) {
-	              if ((tile_n + u) >= n_tiles_group) {
+	              if (!u_in_bounds(u)) {
 	                continue;
 	              }
 #pragma unroll
@@ -2521,7 +2560,7 @@ __global__ void nvfp4_group_gemm_v2_tcgen05_kernel(
 	              static_cast<uint64_t>(desc_sfa[stage_cur]) + cta2_desc_sfa_row_offset;
 	          copy_scale_fragments(desc_sfa_base, tmem_sfa_ptrs, /*is_sfb=*/false);
 	          for (int u = 0; u < UnrollN; ++u) {
-	            if ((tile_n + u) >= n_tiles_group) {
+	            if (!u_in_bounds(u)) {
 	              continue;
 	            }
             if constexpr (WS_UNROLL2_MMA && (NVFP4_GROUP_GEMM_V2_WARP0_ONLY_MAINLOOP != 0)) {
@@ -2586,7 +2625,7 @@ __global__ void nvfp4_group_gemm_v2_tcgen05_kernel(
 			          if (lane == 0) {
 #pragma unroll
 			            for (int u = 0; u < UnrollN; ++u) {
-			              if ((tile_n + u) >= n_tiles_group) {
+			              if (!u_in_bounds(u)) {
 			                continue;
 			              }
 #pragma unroll
@@ -2615,7 +2654,7 @@ __global__ void nvfp4_group_gemm_v2_tcgen05_kernel(
 			          if (threadIdx.x == 0) {
 #pragma unroll
 			          for (int u = 0; u < UnrollN; ++u) {
-			            if ((tile_n + u) >= n_tiles_group) {
+			            if (!u_in_bounds(u)) {
 		              continue;
 		            }
 #pragma unroll
@@ -2688,7 +2727,7 @@ __global__ void nvfp4_group_gemm_v2_tcgen05_kernel(
                 const uint64_t desc_sfa_base = static_cast<uint64_t>(desc_sfa[0]) + cta2_desc_sfa_row_offset;
 	                copy_scale_fragments(desc_sfa_base, tmem_sfa_ptrs, /*is_sfb=*/false);
 	                for (int u = 0; u < UnrollN; ++u) {
-	                  if ((tile_n + u) >= n_tiles_group) {
+	                  if (!u_in_bounds(u)) {
 	                    continue;
 	                  }
 	                  const uint64_t desc_sfb_base = static_cast<uint64_t>(desc_sfb[0][u]);
@@ -2704,7 +2743,7 @@ __global__ void nvfp4_group_gemm_v2_tcgen05_kernel(
 	                    const uint32_t accumulate = (k_byte == 0 && seg == 0) ? 0u : 1u;
 #pragma unroll
 	                    for (int u = 0; u < UnrollN; ++u) {
-	                      if ((tile_n + u) >= n_tiles_group) {
+	                      if (!u_in_bounds(u)) {
 	                        continue;
 	                      }
                       const uint64_t desc_b =
@@ -2783,7 +2822,7 @@ __global__ void nvfp4_group_gemm_v2_tcgen05_kernel(
 		                copy_scale_fragments(desc_sfb0_base, tmem_sfb_ptrs_u0, /*is_sfb=*/true);
 		              } else {
 		                for (int u = 0; u < UnrollN; ++u) {
-		                  if ((tile_n + u) >= n_tiles_group) {
+		                  if (!u_in_bounds(u)) {
 	                    continue;
                   }
                   const uint64_t desc_sfb_base = static_cast<uint64_t>(desc_sfb[0][u]);
@@ -2796,7 +2835,7 @@ __global__ void nvfp4_group_gemm_v2_tcgen05_kernel(
 		                  // Split u=0 MMA issue: warp0 issues seg0, warp2 issues seg1..3.
 	                  // seg0 must execute first when accumulate=0 (k_tile_idx==0), otherwise
                   // later segments would accumulate into uninitialized accumulators.
-                  if ((tile_n + 0) < n_tiles_group) {
+                  if (u_in_bounds(0)) {
                     constexpr int seg = 0;
                     constexpr int u = 0;
                     const uint64_t desc_a =
@@ -2821,7 +2860,7 @@ __global__ void nvfp4_group_gemm_v2_tcgen05_kernel(
 	                    const uint32_t accumulate = (k_byte == 0 && seg == 0) ? 0u : 1u;
 #pragma unroll
 	                    for (int u = 0; u < UnrollN; ++u) {
-	                      if ((tile_n + u) >= n_tiles_group) {
+	                      if (!u_in_bounds(u)) {
 	                        continue;
 	                      }
                       if constexpr (WS_UNROLL2_MMA) {
@@ -3030,7 +3069,7 @@ __global__ void nvfp4_group_gemm_v2_tcgen05_kernel(
                 int unroll_n_valid = 0;
 #pragma unroll
                 for (int u = 0; u < UnrollN; ++u) {
-                  if ((tile_n + u) < n_tiles_group) {
+                  if (u_in_bounds(u)) {
                     ++unroll_n_valid;
                   }
                 }
@@ -3071,7 +3110,7 @@ __global__ void nvfp4_group_gemm_v2_tcgen05_kernel(
 								              copy_scale_fragments(desc_sfb0_base, tmem_sfb_ptrs_u0, /*is_sfb=*/true);
 						            } else {
 						              for (int u = 0; u < UnrollN; ++u) {
-						                if ((tile_n + u) >= n_tiles_group) {
+						                if (!u_in_bounds(u)) {
 				                  continue;
 				                }
 				                const uint64_t desc_sfb_base = static_cast<uint64_t>(desc_sfb[stage_cur][u]);
@@ -3081,7 +3120,7 @@ __global__ void nvfp4_group_gemm_v2_tcgen05_kernel(
 							            }
 							            if constexpr (DEBUG_STAGE != 3) {
 							              if constexpr (WS_SPLIT_U0_SEGS) {
-						                if ((tile_n + 0) < n_tiles_group) {
+						                if (u_in_bounds(0)) {
 					                  constexpr int seg = 0;
 					                  constexpr int u = 0;
 					                  const uint64_t desc_a =
@@ -3105,7 +3144,7 @@ __global__ void nvfp4_group_gemm_v2_tcgen05_kernel(
 					                  const uint32_t accumulate = (k_byte == 0 && seg == 0) ? 0u : 1u;
 #pragma unroll
 						                  for (int u = 0; u < UnrollN; ++u) {
-						                    if ((tile_n + u) >= n_tiles_group) {
+						                    if (!u_in_bounds(u)) {
 						                      continue;
 						                    }
 					                    if constexpr (WS_UNROLL2_MMA) {
@@ -3525,14 +3564,122 @@ __global__ void nvfp4_group_gemm_v2_tcgen05_kernel(
     // to avoid interpreting FP32 bits as packed FP16 (which would corrupt results).
 #pragma unroll
     for (int u = 0; u < UnrollN; ++u) {
-      if ((tile_n + u) >= n_tiles_group) {
+      if (!u_in_bounds(u)) {
         continue;
       }
       const uint32_t tmem_c_tile_u = tmem_c_tiles[u];
       const uint32_t tmem_col_offset_u = 0u;
       const int n_offset_u = n_offset + u * TILE_N;
       const bool n_tile_full = (n_offset_u + TILE_N) <= n_size;
-      if (row_full && n_tile_full) {
+      if constexpr (ASSUME_NO_N_TAIL && ASSUME_ROWS_ALIGNED32) {
+        const size_t out_base = static_cast<size_t>(row_start + lane) * static_cast<size_t>(n_size) +
+                                static_cast<size_t>(n_offset_u);
+#if NVFP4_GROUP_GEMM_V2_EPILOGUE_LD_X32
+        for (int n_base = 0; n_base < TILE_N; n_base += 32) {
+          const uint32_t col_lane = static_cast<uint32_t>(n_base);
+          const uint32_t addr = tcgen05::tmem_addr_add(tmem_c_tile_u, dp_lane, tmem_col_offset_u + col_lane);
+          uint32_t v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15;
+          uint32_t v16, v17, v18, v19, v20, v21, v22, v23, v24, v25, v26, v27, v28, v29, v30, v31;
+          tcgen05::tmem_ld_32dp32b_x32(
+              addr,
+              v0,
+              v1,
+              v2,
+              v3,
+              v4,
+              v5,
+              v6,
+              v7,
+              v8,
+              v9,
+              v10,
+              v11,
+              v12,
+              v13,
+              v14,
+              v15,
+              v16,
+              v17,
+              v18,
+              v19,
+              v20,
+              v21,
+              v22,
+              v23,
+              v24,
+              v25,
+              v26,
+              v27,
+              v28,
+              v29,
+              v30,
+              v31);
+          __half2* out_h2 = reinterpret_cast<__half2*>(c_out + out_base + static_cast<size_t>(n_base));
+          out_h2[0] = __floats2half2_rn(__uint_as_float(v0), __uint_as_float(v1));
+          out_h2[1] = __floats2half2_rn(__uint_as_float(v2), __uint_as_float(v3));
+          out_h2[2] = __floats2half2_rn(__uint_as_float(v4), __uint_as_float(v5));
+          out_h2[3] = __floats2half2_rn(__uint_as_float(v6), __uint_as_float(v7));
+          out_h2[4] = __floats2half2_rn(__uint_as_float(v8), __uint_as_float(v9));
+          out_h2[5] = __floats2half2_rn(__uint_as_float(v10), __uint_as_float(v11));
+          out_h2[6] = __floats2half2_rn(__uint_as_float(v12), __uint_as_float(v13));
+          out_h2[7] = __floats2half2_rn(__uint_as_float(v14), __uint_as_float(v15));
+          out_h2[8] = __floats2half2_rn(__uint_as_float(v16), __uint_as_float(v17));
+          out_h2[9] = __floats2half2_rn(__uint_as_float(v18), __uint_as_float(v19));
+          out_h2[10] = __floats2half2_rn(__uint_as_float(v20), __uint_as_float(v21));
+          out_h2[11] = __floats2half2_rn(__uint_as_float(v22), __uint_as_float(v23));
+          out_h2[12] = __floats2half2_rn(__uint_as_float(v24), __uint_as_float(v25));
+          out_h2[13] = __floats2half2_rn(__uint_as_float(v26), __uint_as_float(v27));
+          out_h2[14] = __floats2half2_rn(__uint_as_float(v28), __uint_as_float(v29));
+          out_h2[15] = __floats2half2_rn(__uint_as_float(v30), __uint_as_float(v31));
+        }
+#elif NVFP4_GROUP_GEMM_V2_EPILOGUE_LD_X16
+        for (int n_base = 0; n_base < TILE_N; n_base += 16) {
+          const uint32_t col_lane = static_cast<uint32_t>(n_base);
+          const uint32_t addr = tcgen05::tmem_addr_add(tmem_c_tile_u, dp_lane, tmem_col_offset_u + col_lane);
+          uint32_t v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15;
+          tcgen05::tmem_ld_32dp32b_x16(addr, v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15);
+          __half2* out_h2 = reinterpret_cast<__half2*>(c_out + out_base + static_cast<size_t>(n_base));
+          out_h2[0] = __floats2half2_rn(__uint_as_float(v0), __uint_as_float(v1));
+          out_h2[1] = __floats2half2_rn(__uint_as_float(v2), __uint_as_float(v3));
+          out_h2[2] = __floats2half2_rn(__uint_as_float(v4), __uint_as_float(v5));
+          out_h2[3] = __floats2half2_rn(__uint_as_float(v6), __uint_as_float(v7));
+          out_h2[4] = __floats2half2_rn(__uint_as_float(v8), __uint_as_float(v9));
+          out_h2[5] = __floats2half2_rn(__uint_as_float(v10), __uint_as_float(v11));
+          out_h2[6] = __floats2half2_rn(__uint_as_float(v12), __uint_as_float(v13));
+          out_h2[7] = __floats2half2_rn(__uint_as_float(v14), __uint_as_float(v15));
+        }
+#else
+        if constexpr (UnrollN == 2) {
+          for (int n_base = 0; n_base < TILE_N; n_base += 16) {
+            const uint32_t col_lane = static_cast<uint32_t>(n_base);
+            const uint32_t addr = tcgen05::tmem_addr_add(tmem_c_tile_u, dp_lane, tmem_col_offset_u + col_lane);
+            uint32_t v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15;
+            tcgen05::tmem_ld_32dp32b_x16(addr, v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15);
+            __half2* out_h2 = reinterpret_cast<__half2*>(c_out + out_base + static_cast<size_t>(n_base));
+            out_h2[0] = __floats2half2_rn(__uint_as_float(v0), __uint_as_float(v1));
+            out_h2[1] = __floats2half2_rn(__uint_as_float(v2), __uint_as_float(v3));
+            out_h2[2] = __floats2half2_rn(__uint_as_float(v4), __uint_as_float(v5));
+            out_h2[3] = __floats2half2_rn(__uint_as_float(v6), __uint_as_float(v7));
+            out_h2[4] = __floats2half2_rn(__uint_as_float(v8), __uint_as_float(v9));
+            out_h2[5] = __floats2half2_rn(__uint_as_float(v10), __uint_as_float(v11));
+            out_h2[6] = __floats2half2_rn(__uint_as_float(v12), __uint_as_float(v13));
+            out_h2[7] = __floats2half2_rn(__uint_as_float(v14), __uint_as_float(v15));
+          }
+        } else {
+          for (int n_base = 0; n_base < TILE_N; n_base += 8) {
+            const uint32_t col_lane = static_cast<uint32_t>(n_base);
+            const uint32_t addr = tcgen05::tmem_addr_add(tmem_c_tile_u, dp_lane, tmem_col_offset_u + col_lane);
+            uint32_t v0, v1, v2, v3, v4, v5, v6, v7;
+            tcgen05::tmem_ld_32dp32b_x8(addr, v0, v1, v2, v3, v4, v5, v6, v7);
+            __half2* out_h2 = reinterpret_cast<__half2*>(c_out + out_base + static_cast<size_t>(n_base));
+            out_h2[0] = __floats2half2_rn(__uint_as_float(v0), __uint_as_float(v1));
+            out_h2[1] = __floats2half2_rn(__uint_as_float(v2), __uint_as_float(v3));
+            out_h2[2] = __floats2half2_rn(__uint_as_float(v4), __uint_as_float(v5));
+            out_h2[3] = __floats2half2_rn(__uint_as_float(v6), __uint_as_float(v7));
+          }
+        }
+#endif
+      } else if (row_full && n_tile_full) {
         const size_t out_base = base + static_cast<size_t>(n_offset_u);
 #if NVFP4_GROUP_GEMM_V2_EPILOGUE_LD_X32
         for (int n_base = 0; n_base < TILE_N; n_base += 32) {
@@ -3609,8 +3756,6 @@ __global__ void nvfp4_group_gemm_v2_tcgen05_kernel(
           out_h2[7] = __floats2half2_rn(__uint_as_float(v14), __uint_as_float(v15));
         }
 #else
-        // Workaround: `tcgen05.ld ... x8` has been observed to fault for some UnrollN=2 TMEM ranges.
-        // Use x16 for UnrollN=2 to keep epilogue stable; keep x8 for UnrollN=1.
         if constexpr (UnrollN == 2) {
           for (int n_base = 0; n_base < TILE_N; n_base += 16) {
             const uint32_t col_lane = static_cast<uint32_t>(n_base);
@@ -3867,6 +4012,11 @@ void nvfp4_group_gemm_v2_forward_grouped_tcgen05_cuda(
   const int enable_tma_multicast_env =
       parse_env_int("AISP_NVFP4_GROUP_GEMM_V2_ENABLE_TMA_MULTICAST", 0);
   const int unroll_n = parse_env_int("AISP_NVFP4_GROUP_GEMM_V2_UNROLL_N", 1);
+  const bool assume_no_n_tail = parse_env_int("AISP_NVFP4_GROUP_GEMM_V2_ASSUME_NO_N_TAIL", 0) != 0;
+  const bool enable_case2_specialized_epilogue =
+      parse_env_int("AISP_NVFP4_GROUP_GEMM_V2_ENABLE_CASE2_SPECIALIZED_EPILOGUE", 0) != 0;
+  const bool enable_case2_inline_tm_major_map =
+      parse_env_int("AISP_NVFP4_GROUP_GEMM_V2_ENABLE_CASE2_INLINE_TM_MAJOR_MAP", 0) != 0;
   TORCH_CHECK(unroll_n == 1 || unroll_n == 2,
               "AISP_NVFP4_GROUP_GEMM_V2_UNROLL_N must be 1 or 2, got ",
               unroll_n);
@@ -3886,6 +4036,15 @@ void nvfp4_group_gemm_v2_forward_grouped_tcgen05_cuda(
       cluster_dim_x = parsed;
     }
   }
+  const char* cta_order_env = std::getenv("AISP_NVFP4_GROUP_GEMM_V2_CTA_ORDER");
+  const bool cta_order_tm_major =
+      (cta_order_env == nullptr || cta_order_env[0] == '\0' || std::strcmp(cta_order_env, "tm_major") == 0);
+  const bool use_case2_specialized_epilogue =
+      enable_case2_specialized_epilogue && (groups == 2) && (max_n_size == 3072) && (max_m_size == 320) &&
+      (unroll_n == 2) && (cluster_dim_x == 1);
+  const bool use_case2_inline_tm_major_map =
+      enable_case2_inline_tm_major_map && (groups == 2) && (max_n_size == 3072) && (max_m_size == 320) &&
+      (unroll_n == 2) && (cluster_dim_x == 1) && assume_no_n_tail && cta_order_tm_major;
 
   const uint64_t* a_ptrs_dev = reinterpret_cast<const uint64_t*>(a_ptrs.data_ptr<int64_t>());
   const uint64_t* b_ptrs_dev = reinterpret_cast<const uint64_t*>(b_ptrs.data_ptr<int64_t>());
@@ -4579,43 +4738,165 @@ void nvfp4_group_gemm_v2_forward_grouped_tcgen05_cuda(
 
 #if NVFP4_GROUP_GEMM_V2_TMEM_COLUMNS == 512
   if (unroll_n == 2) {
-    configure_kernel_launch_attrs(nvfp4_group_gemm_v2_tcgen05_kernel<1, 2, 128, false>, max_shared_optin, false);
-    nvfp4_group_gemm_v2_tcgen05_kernel<1, 2, 128, false><<<grid, block, 0, at::cuda::getCurrentCUDAStream()>>>(
-        a_ptrs_dev,
-        b_ptrs_dev,
-        sfa_ptrs_dev,
-        sfb_ptrs_dev,
-        c_ptrs_dev,
-        m_sizes.data_ptr<int32_t>(),
-        n_sizes.data_ptr<int32_t>(),
-        k_halves.data_ptr<int32_t>(),
-        k_scales.data_ptr<int32_t>(),
-        a_descs_dev,
-        b_descs_dev,
-        sfa_descs_dev,
-        sfb_descs_dev,
-        cta_group_idx_dev,
-        cta_tile_m_dev,
-        cta_tile_n_dev,
-        cta2_desc_a_row_offset_rows,
-        cta2_desc_b_row_offset_rows,
-        cta2_desc_sfa_row_offset_rows,
-        cta2_epilogue_row_base_rows,
-        cta2_epilogue_addr_mode,
-        cta2_sfb_slot_mode,
-        cta2_tmem_c_word_offset,
-        cta2_tmem_sf_word_offset,
-        cta2_tmem_sf_rank_word_offset,
-        cta2_tsfa_word_offset,
-        cta2_tsfb_word_offset,
-        debug_tmem_dump,
-        debug_tmem_only_rank,
-        debug_tmem_idx_add,
-        cta2_partition_b,
-        debug_print_ptrs,
-        cta2_idesc_m_dim_override,
-        cta2_idesc_n_dim_override,
-        /*cluster_dim_x=*/1);
+    if (use_case2_inline_tm_major_map) {
+      configure_kernel_launch_attrs(
+          nvfp4_group_gemm_v2_tcgen05_kernel<1, 2, 128, false, true, false, true>, max_shared_optin, false);
+      nvfp4_group_gemm_v2_tcgen05_kernel<1, 2, 128, false, true, false, true>
+          <<<grid, block, 0, at::cuda::getCurrentCUDAStream()>>>(
+              a_ptrs_dev,
+              b_ptrs_dev,
+              sfa_ptrs_dev,
+              sfb_ptrs_dev,
+              c_ptrs_dev,
+              m_sizes.data_ptr<int32_t>(),
+              n_sizes.data_ptr<int32_t>(),
+              k_halves.data_ptr<int32_t>(),
+              k_scales.data_ptr<int32_t>(),
+              a_descs_dev,
+              b_descs_dev,
+              sfa_descs_dev,
+              sfb_descs_dev,
+              cta_group_idx_dev,
+              cta_tile_m_dev,
+              cta_tile_n_dev,
+              cta2_desc_a_row_offset_rows,
+              cta2_desc_b_row_offset_rows,
+              cta2_desc_sfa_row_offset_rows,
+              cta2_epilogue_row_base_rows,
+              cta2_epilogue_addr_mode,
+              cta2_sfb_slot_mode,
+              cta2_tmem_c_word_offset,
+              cta2_tmem_sf_word_offset,
+              cta2_tmem_sf_rank_word_offset,
+              cta2_tsfa_word_offset,
+              cta2_tsfb_word_offset,
+              debug_tmem_dump,
+              debug_tmem_only_rank,
+              debug_tmem_idx_add,
+              cta2_partition_b,
+              debug_print_ptrs,
+              cta2_idesc_m_dim_override,
+              cta2_idesc_n_dim_override,
+              /*cluster_dim_x=*/1);
+    } else if (assume_no_n_tail && use_case2_specialized_epilogue) {
+      configure_kernel_launch_attrs(
+          nvfp4_group_gemm_v2_tcgen05_kernel<1, 2, 128, false, true, true>, max_shared_optin, false);
+      nvfp4_group_gemm_v2_tcgen05_kernel<1, 2, 128, false, true, true>
+          <<<grid, block, 0, at::cuda::getCurrentCUDAStream()>>>(
+              a_ptrs_dev,
+              b_ptrs_dev,
+              sfa_ptrs_dev,
+              sfb_ptrs_dev,
+              c_ptrs_dev,
+              m_sizes.data_ptr<int32_t>(),
+              n_sizes.data_ptr<int32_t>(),
+              k_halves.data_ptr<int32_t>(),
+              k_scales.data_ptr<int32_t>(),
+              a_descs_dev,
+              b_descs_dev,
+              sfa_descs_dev,
+              sfb_descs_dev,
+              cta_group_idx_dev,
+              cta_tile_m_dev,
+              cta_tile_n_dev,
+              cta2_desc_a_row_offset_rows,
+              cta2_desc_b_row_offset_rows,
+              cta2_desc_sfa_row_offset_rows,
+              cta2_epilogue_row_base_rows,
+              cta2_epilogue_addr_mode,
+              cta2_sfb_slot_mode,
+              cta2_tmem_c_word_offset,
+              cta2_tmem_sf_word_offset,
+              cta2_tmem_sf_rank_word_offset,
+              cta2_tsfa_word_offset,
+              cta2_tsfb_word_offset,
+              debug_tmem_dump,
+              debug_tmem_only_rank,
+              debug_tmem_idx_add,
+              cta2_partition_b,
+              debug_print_ptrs,
+              cta2_idesc_m_dim_override,
+              cta2_idesc_n_dim_override,
+              /*cluster_dim_x=*/1);
+    } else if (assume_no_n_tail) {
+      configure_kernel_launch_attrs(
+          nvfp4_group_gemm_v2_tcgen05_kernel<1, 2, 128, false, true>, max_shared_optin, false);
+      nvfp4_group_gemm_v2_tcgen05_kernel<1, 2, 128, false, true>
+          <<<grid, block, 0, at::cuda::getCurrentCUDAStream()>>>(
+              a_ptrs_dev,
+              b_ptrs_dev,
+              sfa_ptrs_dev,
+              sfb_ptrs_dev,
+              c_ptrs_dev,
+              m_sizes.data_ptr<int32_t>(),
+              n_sizes.data_ptr<int32_t>(),
+              k_halves.data_ptr<int32_t>(),
+              k_scales.data_ptr<int32_t>(),
+              a_descs_dev,
+              b_descs_dev,
+              sfa_descs_dev,
+              sfb_descs_dev,
+              cta_group_idx_dev,
+              cta_tile_m_dev,
+              cta_tile_n_dev,
+              cta2_desc_a_row_offset_rows,
+              cta2_desc_b_row_offset_rows,
+              cta2_desc_sfa_row_offset_rows,
+              cta2_epilogue_row_base_rows,
+              cta2_epilogue_addr_mode,
+              cta2_sfb_slot_mode,
+              cta2_tmem_c_word_offset,
+              cta2_tmem_sf_word_offset,
+              cta2_tmem_sf_rank_word_offset,
+              cta2_tsfa_word_offset,
+              cta2_tsfb_word_offset,
+              debug_tmem_dump,
+              debug_tmem_only_rank,
+              debug_tmem_idx_add,
+              cta2_partition_b,
+              debug_print_ptrs,
+              cta2_idesc_m_dim_override,
+              cta2_idesc_n_dim_override,
+              /*cluster_dim_x=*/1);
+    } else {
+      configure_kernel_launch_attrs(nvfp4_group_gemm_v2_tcgen05_kernel<1, 2, 128, false>, max_shared_optin, false);
+      nvfp4_group_gemm_v2_tcgen05_kernel<1, 2, 128, false><<<grid, block, 0, at::cuda::getCurrentCUDAStream()>>>(
+          a_ptrs_dev,
+          b_ptrs_dev,
+          sfa_ptrs_dev,
+          sfb_ptrs_dev,
+          c_ptrs_dev,
+          m_sizes.data_ptr<int32_t>(),
+          n_sizes.data_ptr<int32_t>(),
+          k_halves.data_ptr<int32_t>(),
+          k_scales.data_ptr<int32_t>(),
+          a_descs_dev,
+          b_descs_dev,
+          sfa_descs_dev,
+          sfb_descs_dev,
+          cta_group_idx_dev,
+          cta_tile_m_dev,
+          cta_tile_n_dev,
+          cta2_desc_a_row_offset_rows,
+          cta2_desc_b_row_offset_rows,
+          cta2_desc_sfa_row_offset_rows,
+          cta2_epilogue_row_base_rows,
+          cta2_epilogue_addr_mode,
+          cta2_sfb_slot_mode,
+          cta2_tmem_c_word_offset,
+          cta2_tmem_sf_word_offset,
+          cta2_tmem_sf_rank_word_offset,
+          cta2_tsfa_word_offset,
+          cta2_tsfb_word_offset,
+          debug_tmem_dump,
+          debug_tmem_only_rank,
+          debug_tmem_idx_add,
+          cta2_partition_b,
+          debug_print_ptrs,
+          cta2_idesc_m_dim_override,
+          cta2_idesc_n_dim_override,
+          /*cluster_dim_x=*/1);
+    }
     C10_CUDA_KERNEL_LAUNCH_CHECK();
     return;
   }

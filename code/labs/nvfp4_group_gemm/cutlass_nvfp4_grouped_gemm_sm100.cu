@@ -169,6 +169,15 @@ struct MMA1SMConfigN128 {
   using EpilogueSchedule = cutlass::epilogue::PtrArrayTmaWarpSpecialized1Sm;
 };
 
+// Case2/3 specialization: keep N=128 tile but use the generic block-scaled SM100 ptr-array
+// schedule path (instead of explicit NVF4 schedule) to enable a distinct instruction/scheduling
+// selection for grouped two-problem shapes.
+struct MMA1SMConfigN128Case23 {
+  using MmaTileShape = cute::Shape<cute::_128, cute::_128, cute::_256>;
+  using KernelSchedule = cutlass::gemm::KernelPtrArrayTmaWarpSpecialized1SmBlockScaledSm100;
+  using EpilogueSchedule = cutlass::epilogue::PtrArrayTmaWarpSpecialized1Sm;
+};
+
 // Alternative 1SM config with N=192 tile. This may reduce wave quantization losses for
 // case2/case3-sized grouped-N shapes while preserving 1SM block-scaled semantics.
 struct MMA1SMConfigN192 {
@@ -393,6 +402,45 @@ using CollectiveMainloop1SMN128S7 = typename cutlass::gemm::collective::Collecti
 using GemmKernel1SMN128S7 =
     cutlass::gemm::kernel::GemmUniversal<ProblemShape, CollectiveMainloop1SMN128S7, CollectiveEpilogue1SMN128>;
 using Gemm1SMN128S7 = cutlass::gemm::device::GemmUniversalAdapter<GemmKernel1SMN128S7>;
+
+using CollectiveEpilogue1SMN128Case23 = typename cutlass::epilogue::collective::CollectiveBuilder<
+    ArchTag, OperatorClass,
+    typename MMA1SMConfigN128Case23::MmaTileShape, ClusterShape,
+    cute::Shape<cute::_128, cute::_64>,
+    ElementAccumulator, ElementAccumulator,
+    ElementC, LayoutC*, AlignmentC,
+    ElementD, LayoutD*, AlignmentD,
+    typename MMA1SMConfigN128Case23::EpilogueSchedule>::CollectiveOp;
+
+// Add a modest carveout to force a different effective stage budget than the generic N128 lane.
+constexpr int k1SMN128Case23ReserveBytes = 8 * 1024;
+using CollectiveMainloop1SMN128Case23 = typename cutlass::gemm::collective::CollectiveBuilder<
+    ArchTag, OperatorClass,
+    ElementA, LayoutA*, AlignmentA,
+    ElementB, LayoutB*, AlignmentB,
+    ElementAccumulator,
+    typename MMA1SMConfigN128Case23::MmaTileShape, ClusterShape,
+    cutlass::gemm::collective::StageCountAutoCarveout<
+        static_cast<int>(sizeof(typename CollectiveEpilogue1SMN128Case23::SharedStorage)) + k1SMN128Case23ReserveBytes>,
+    typename MMA1SMConfigN128Case23::KernelSchedule>::CollectiveOp;
+
+using GemmKernel1SMN128Case23 =
+    cutlass::gemm::kernel::GemmUniversal<ProblemShape, CollectiveMainloop1SMN128Case23, CollectiveEpilogue1SMN128Case23>;
+using Gemm1SMN128Case23 = cutlass::gemm::device::GemmUniversalAdapter<GemmKernel1SMN128Case23>;
+
+// Fixed-stage case2/case3 lane on the block-scaled schedule for lower stage-jitter.
+using CollectiveMainloop1SMN128Case23S3 = typename cutlass::gemm::collective::CollectiveBuilder<
+    ArchTag, OperatorClass,
+    ElementA, LayoutA*, AlignmentA,
+    ElementB, LayoutB*, AlignmentB,
+    ElementAccumulator,
+    typename MMA1SMConfigN128Case23::MmaTileShape, ClusterShape,
+    cutlass::gemm::collective::StageCount<3>,
+    typename MMA1SMConfigN128Case23::KernelSchedule>::CollectiveOp;
+
+using GemmKernel1SMN128Case23S3 =
+    cutlass::gemm::kernel::GemmUniversal<ProblemShape, CollectiveMainloop1SMN128Case23S3, CollectiveEpilogue1SMN128Case23>;
+using Gemm1SMN128Case23S3 = cutlass::gemm::device::GemmUniversalAdapter<GemmKernel1SMN128Case23S3>;
 
 using CollectiveEpilogue1SMN64 = typename cutlass::epilogue::collective::CollectiveBuilder<
     ArchTag, OperatorClass,
@@ -1221,6 +1269,8 @@ using GemmPlan1SMN128S4 = GemmPlanT<Gemm1SMN128S4>;
 using GemmPlan1SMN128S5 = GemmPlanT<Gemm1SMN128S5>;
 using GemmPlan1SMN128S6 = GemmPlanT<Gemm1SMN128S6>;
 using GemmPlan1SMN128S7 = GemmPlanT<Gemm1SMN128S7>;
+using GemmPlan1SMN128Case23 = GemmPlanT<Gemm1SMN128Case23>;
+using GemmPlan1SMN128Case23S3 = GemmPlanT<Gemm1SMN128Case23S3>;
 using GemmPlan2SM = GemmPlanT<Gemm2SM>;
 using GemmPlan2SMMXF4 = GemmPlanT<Gemm2SMMXF4>;
 using GemmPlan2SMMXF4S1 = GemmPlanT<Gemm2SMMXF4S1>;
@@ -1461,6 +1511,26 @@ std::vector<torch::Tensor> build_metadata_1sm_n128_s7(
     int64_t raster_order,
     int64_t max_swizzle_size) {
   return build_metadata_impl<Gemm1SMN128S7>(
+      std::move(problem_sizes_mnkl_cpu), cluster_m, cluster_n, raster_order, max_swizzle_size);
+}
+
+std::vector<torch::Tensor> build_metadata_1sm_n128_case23(
+    torch::Tensor problem_sizes_mnkl_cpu,
+    int64_t cluster_m,
+    int64_t cluster_n,
+    int64_t raster_order,
+    int64_t max_swizzle_size) {
+  return build_metadata_impl<Gemm1SMN128Case23>(
+      std::move(problem_sizes_mnkl_cpu), cluster_m, cluster_n, raster_order, max_swizzle_size);
+}
+
+std::vector<torch::Tensor> build_metadata_1sm_n128_case23_s3(
+    torch::Tensor problem_sizes_mnkl_cpu,
+    int64_t cluster_m,
+    int64_t cluster_n,
+    int64_t raster_order,
+    int64_t max_swizzle_size) {
+  return build_metadata_impl<Gemm1SMN128Case23S3>(
       std::move(problem_sizes_mnkl_cpu), cluster_m, cluster_n, raster_order, max_swizzle_size);
 }
 
@@ -1720,6 +1790,14 @@ std::vector<torch::Tensor> build_metadata_1sm_n128_s7(torch::Tensor, int64_t, in
   TORCH_CHECK(false, "CUTLASS_ARCH_MMA_SM100_SUPPORTED is not defined (requires SM100 build)");
 }
 
+std::vector<torch::Tensor> build_metadata_1sm_n128_case23(torch::Tensor, int64_t, int64_t, int64_t, int64_t) {
+  TORCH_CHECK(false, "CUTLASS_ARCH_MMA_SM100_SUPPORTED is not defined (requires SM100 build)");
+}
+
+std::vector<torch::Tensor> build_metadata_1sm_n128_case23_s3(torch::Tensor, int64_t, int64_t, int64_t, int64_t) {
+  TORCH_CHECK(false, "CUTLASS_ARCH_MMA_SM100_SUPPORTED is not defined (requires SM100 build)");
+}
+
 std::vector<torch::Tensor> build_metadata_2sm(torch::Tensor, int64_t, int64_t, int64_t, int64_t) {
   TORCH_CHECK(false, "CUTLASS_ARCH_MMA_SM100_SUPPORTED is not defined (requires SM100 build)");
 }
@@ -1949,6 +2027,32 @@ class GemmPlan1SMN128S7 {
   GemmPlan1SMN128S7(torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor,
                     torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor,
                     double, double, int64_t, int64_t, int64_t, int64_t, bool) {
+    TORCH_CHECK(false, "CUTLASS_ARCH_MMA_SM100_SUPPORTED is not defined (requires SM100 build)");
+  }
+
+  void run() {
+    TORCH_CHECK(false, "CUTLASS_ARCH_MMA_SM100_SUPPORTED is not defined (requires SM100 build)");
+  }
+};
+
+class GemmPlan1SMN128Case23 {
+ public:
+  GemmPlan1SMN128Case23(torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor,
+                        torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor,
+                        double, double, int64_t, int64_t, int64_t, int64_t, bool) {
+    TORCH_CHECK(false, "CUTLASS_ARCH_MMA_SM100_SUPPORTED is not defined (requires SM100 build)");
+  }
+
+  void run() {
+    TORCH_CHECK(false, "CUTLASS_ARCH_MMA_SM100_SUPPORTED is not defined (requires SM100 build)");
+  }
+};
+
+class GemmPlan1SMN128Case23S3 {
+ public:
+  GemmPlan1SMN128Case23S3(torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor,
+                          torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor,
+                          double, double, int64_t, int64_t, int64_t, int64_t, bool) {
     TORCH_CHECK(false, "CUTLASS_ARCH_MMA_SM100_SUPPORTED is not defined (requires SM100 build)");
   }
 
@@ -2266,6 +2370,16 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
       bound_types,
       "GemmPlan1SMN128S7",
       "Run the pre-initialized grouped GEMM plan (1SM MMA, N=128 tile, reduced-SMEM s7 lane)");
+  bind_plan_type<GemmPlan1SMN128Case23>(
+      m,
+      bound_types,
+      "GemmPlan1SMN128Case23",
+      "Run the pre-initialized grouped GEMM plan (1SM MMA, N=128 case2/case3 specialized lane)");
+  bind_plan_type<GemmPlan1SMN128Case23S3>(
+      m,
+      bound_types,
+      "GemmPlan1SMN128Case23S3",
+      "Run the pre-initialized grouped GEMM plan (1SM MMA, N=128 case2/case3 specialized lane, StageCount=3)");
 
   bind_plan_type<GemmPlan2SM>(m, bound_types, "GemmPlan2SM", "Run the pre-initialized grouped GEMM plan (2SM MMA)");
   bind_plan_type<GemmPlan2SMMXF4>(
@@ -2447,6 +2561,28 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
       &build_metadata_1sm_n128_s7,
       "Build per-case metadata tensors for SM100 NVFP4 block-scaled grouped GEMM (CUDA) - 1SM MMA, N=128 tile, "
       "reduced-SMEM s7 lane",
+      py::arg("problem_sizes_mnkl_cpu"),
+      py::arg("cluster_m") = 1,
+      py::arg("cluster_n") = 1,
+      py::arg("raster_order") = 0,
+      py::arg("max_swizzle_size") = 0);
+
+  m.def(
+      "build_metadata_1sm_n128_case23",
+      &build_metadata_1sm_n128_case23,
+      "Build per-case metadata tensors for SM100 NVFP4 block-scaled grouped GEMM (CUDA) - 1SM MMA, N=128 "
+      "case2/case3 specialized lane",
+      py::arg("problem_sizes_mnkl_cpu"),
+      py::arg("cluster_m") = 1,
+      py::arg("cluster_n") = 1,
+      py::arg("raster_order") = 0,
+      py::arg("max_swizzle_size") = 0);
+
+  m.def(
+      "build_metadata_1sm_n128_case23_s3",
+      &build_metadata_1sm_n128_case23_s3,
+      "Build per-case metadata tensors for SM100 NVFP4 block-scaled grouped GEMM (CUDA) - 1SM MMA, N=128 "
+      "case2/case3 specialized lane, StageCount=3",
       py::arg("problem_sizes_mnkl_cpu"),
       py::arg("cluster_m") = 1,
       py::arg("cluster_n") = 1,
@@ -3406,6 +3542,146 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
       },
       "Create a pre-initialized plan for SM100 NVFP4 block-scaled grouped GEMM (CUDA) - 1SM MMA, N=128 tile, "
       "reduced-SMEM s7 lane",
+      py::arg("problem_shapes_u8"),
+      py::arg("stride_a_u8"),
+      py::arg("stride_b_u8"),
+      py::arg("stride_c_u8"),
+      py::arg("stride_d_u8"),
+      py::arg("layout_sfa_u8"),
+      py::arg("layout_sfb_u8"),
+      py::arg("workspace_u8"),
+      py::arg("ptr_a_i64"),
+      py::arg("ptr_b_i64"),
+      py::arg("ptr_sfa_i64"),
+      py::arg("ptr_sfb_i64"),
+      py::arg("ptr_c_i64"),
+      py::arg("ptr_d_i64"),
+      py::arg("alpha") = 1.0,
+      py::arg("beta") = 0.0,
+      py::arg("raster_order") = 0,
+      py::arg("cluster_m") = 1,
+      py::arg("cluster_n") = 1,
+      py::arg("max_swizzle_size") = 0,
+      py::arg("use_pdl") = false);
+
+  m.def(
+      "create_plan_1sm_n128_case23",
+      [](torch::Tensor problem_shapes_u8,
+         torch::Tensor stride_a_u8,
+         torch::Tensor stride_b_u8,
+         torch::Tensor stride_c_u8,
+         torch::Tensor stride_d_u8,
+         torch::Tensor layout_sfa_u8,
+         torch::Tensor layout_sfb_u8,
+         torch::Tensor workspace_u8,
+         torch::Tensor ptr_a_i64,
+         torch::Tensor ptr_b_i64,
+         torch::Tensor ptr_sfa_i64,
+         torch::Tensor ptr_sfb_i64,
+         torch::Tensor ptr_c_i64,
+         torch::Tensor ptr_d_i64,
+         double alpha,
+         double beta,
+         int64_t raster_order,
+         int64_t cluster_m,
+         int64_t cluster_n,
+         int64_t max_swizzle_size,
+         bool use_pdl) {
+        return std::make_shared<GemmPlan1SMN128Case23>(
+            problem_shapes_u8,
+            stride_a_u8,
+            stride_b_u8,
+            stride_c_u8,
+            stride_d_u8,
+            layout_sfa_u8,
+            layout_sfb_u8,
+            workspace_u8,
+            ptr_a_i64,
+            ptr_b_i64,
+            ptr_sfa_i64,
+            ptr_sfb_i64,
+            ptr_c_i64,
+            ptr_d_i64,
+            alpha,
+            beta,
+            raster_order,
+            cluster_m,
+            cluster_n,
+            max_swizzle_size,
+            use_pdl);
+      },
+      "Create a pre-initialized plan for SM100 NVFP4 block-scaled grouped GEMM (CUDA) - 1SM MMA, N=128 "
+      "case2/case3 specialized lane",
+      py::arg("problem_shapes_u8"),
+      py::arg("stride_a_u8"),
+      py::arg("stride_b_u8"),
+      py::arg("stride_c_u8"),
+      py::arg("stride_d_u8"),
+      py::arg("layout_sfa_u8"),
+      py::arg("layout_sfb_u8"),
+      py::arg("workspace_u8"),
+      py::arg("ptr_a_i64"),
+      py::arg("ptr_b_i64"),
+      py::arg("ptr_sfa_i64"),
+      py::arg("ptr_sfb_i64"),
+      py::arg("ptr_c_i64"),
+      py::arg("ptr_d_i64"),
+      py::arg("alpha") = 1.0,
+      py::arg("beta") = 0.0,
+      py::arg("raster_order") = 0,
+      py::arg("cluster_m") = 1,
+      py::arg("cluster_n") = 1,
+      py::arg("max_swizzle_size") = 0,
+      py::arg("use_pdl") = false);
+
+  m.def(
+      "create_plan_1sm_n128_case23_s3",
+      [](torch::Tensor problem_shapes_u8,
+         torch::Tensor stride_a_u8,
+         torch::Tensor stride_b_u8,
+         torch::Tensor stride_c_u8,
+         torch::Tensor stride_d_u8,
+         torch::Tensor layout_sfa_u8,
+         torch::Tensor layout_sfb_u8,
+         torch::Tensor workspace_u8,
+         torch::Tensor ptr_a_i64,
+         torch::Tensor ptr_b_i64,
+         torch::Tensor ptr_sfa_i64,
+         torch::Tensor ptr_sfb_i64,
+         torch::Tensor ptr_c_i64,
+         torch::Tensor ptr_d_i64,
+         double alpha,
+         double beta,
+         int64_t raster_order,
+         int64_t cluster_m,
+         int64_t cluster_n,
+         int64_t max_swizzle_size,
+         bool use_pdl) {
+        return std::make_shared<GemmPlan1SMN128Case23S3>(
+            problem_shapes_u8,
+            stride_a_u8,
+            stride_b_u8,
+            stride_c_u8,
+            stride_d_u8,
+            layout_sfa_u8,
+            layout_sfb_u8,
+            workspace_u8,
+            ptr_a_i64,
+            ptr_b_i64,
+            ptr_sfa_i64,
+            ptr_sfb_i64,
+            ptr_c_i64,
+            ptr_d_i64,
+            alpha,
+            beta,
+            raster_order,
+            cluster_m,
+            cluster_n,
+            max_swizzle_size,
+            use_pdl);
+      },
+      "Create a pre-initialized plan for SM100 NVFP4 block-scaled grouped GEMM (CUDA) - 1SM MMA, N=128 "
+      "case2/case3 specialized lane, StageCount=3",
       py::arg("problem_shapes_u8"),
       py::arg("stride_a_u8"),
       py::arg("stride_b_u8"),

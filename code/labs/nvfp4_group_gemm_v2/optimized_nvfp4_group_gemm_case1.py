@@ -30,6 +30,7 @@ os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_V2_CTA_ORDER", "tm_major")
 os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_V2_CLUSTER_DIM_X", "1")
 os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_V2_ENABLE_TMA_MULTICAST", "0")
 os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_V2_TMA_L2_PROMOTION", "3")
+os.environ.setdefault("AISP_NVFP4_GROUP_GEMM_V2_ASSUME_NO_N_TAIL", "1")
 
 # Keep the build namespace stable for this optimized configuration so it doesn't collide
 # with the conservative baseline extension build.
