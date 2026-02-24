@@ -49,6 +49,7 @@ The full suite also includes two required operator checks by default:
 - Quick friction battery (`scripts/run_quick_friction_all_nodes.sh`) on all hosts.
 - Monitoring expectations snapshot (`scripts/collect_monitoring_expectations_all_nodes.sh`) on all hosts.
 - Operator checks dashboard rollup (`analysis/plot_operator_checks_dashboard.py`) that summarizes both checks.
+- For localhost single-host packages, quick-friction defaults to expected-failure classification for `uv_torch_install,ip_owner,speedtest` unless overridden with `--quick-friction-allow-failed-checks`.
 
 New explicit knobs for those required gates:
 ```bash
@@ -83,6 +84,36 @@ Optional high-impact cross-reference diagnostics:
   --enable-allreduce-latency-comp --allreduce-latency-payload-gib 4.0 --allreduce-latency-chunks 1000 \
   --enable-allgather-control-plane --allgather-control-iters 2000 --allgather-control-warmup 200 \
   --enable-nccl-algo-comparison --nccl-algos Ring,Tree,NVLS,auto
+```
+
+### 1b) Localhost Full Package Rendering
+For single-host localhost runs, the suite auto-renders:
+- `cluster/field-report-localhost.md`
+- `cluster/field-report-localhost-notes.md`
+
+You can force/disable rendering with:
+```bash
+scripts/run_cluster_eval_suite.sh ... --render-localhost-report
+scripts/run_cluster_eval_suite.sh ... --skip-render-localhost-report
+```
+
+Standalone render command:
+```bash
+python3 cluster/scripts/render_localhost_field_report_package.py \
+  --run-id <run_id> \
+  --label localhost
+```
+
+### 1c) Canonical Cleanup (Required Hygiene)
+After promoting a new canonical run id, remove superseded artifacts:
+```bash
+cluster/scripts/cleanup_run_artifacts.sh \
+  --canonical-run-id <run_id> \
+  --apply
+```
+Retain explicit historical baselines by adding:
+```bash
+  --allow-run-id <historical_run_id>
 ```
 
 Optional multi-node vLLM serving path (Ray + TP across both nodes):

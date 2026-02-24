@@ -27,6 +27,7 @@ Options:
   --ngc-image <ref>      NGC image for pull check (default: nvcr.io/nvidia/pytorch:24.05-py3)
   --hf-model <id>        HF model for download check (default: openai-community/gpt2)
   --hf-local-dir-base <path>  Base dir for temporary HF downloads (default: /tmp)
+  --allow-failed-checks <csv>  Check failures to classify as expected (default: none)
   --strict               Return non-zero if any host status is not "ok"
 EOF
 }
@@ -45,6 +46,7 @@ TORCH_INDEX_URL="https://download.pytorch.org/whl/cu124"
 NGC_IMAGE="nvcr.io/nvidia/pytorch:24.05-py3"
 HF_MODEL="openai-community/gpt2"
 HF_LOCAL_DIR_BASE="/tmp"
+ALLOW_FAILED_CHECKS=""
 STRICT=0
 
 while [[ $# -gt 0 ]]; do
@@ -62,6 +64,7 @@ while [[ $# -gt 0 ]]; do
     --ngc-image) NGC_IMAGE="$2"; shift 2 ;;
     --hf-model) HF_MODEL="$2"; shift 2 ;;
     --hf-local-dir-base) HF_LOCAL_DIR_BASE="$2"; shift 2 ;;
+    --allow-failed-checks) ALLOW_FAILED_CHECKS="$2"; shift 2 ;;
     --strict) STRICT=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; usage >&2; exit 2 ;;
@@ -149,6 +152,7 @@ torch_index_url = sys.argv[5]
 ngc_image = sys.argv[6]
 hf_model = sys.argv[7]
 hf_local_dir_base = sys.argv[8]
+allow_failed_checks_csv = sys.argv[9]
 
 allowed = {
     "uv_torch_install",
@@ -160,9 +164,17 @@ allowed = {
     "speedtest",
 }
 checks_selected = [c.strip() for c in checks_csv.split(",") if c.strip()]
+requested_allowed_failed_checks = [c.strip() for c in allow_failed_checks_csv.split(",") if c.strip()]
 for check_name in checks_selected:
     if check_name not in allowed:
         raise SystemExit(f"unsupported check: {check_name}")
+for check_name in requested_allowed_failed_checks:
+    if check_name not in allowed:
+        raise SystemExit(f"unsupported allow-failed check: {check_name}")
+allowed_failed_checks = []
+for check_name in requested_allowed_failed_checks:
+    if check_name not in allowed_failed_checks:
+        allowed_failed_checks.append(check_name)
 
 hostname = socket.gethostname()
 tmp_root = tempfile.mkdtemp(prefix=f"quick_friction_{run_id}_{hostname}_")
@@ -411,11 +423,13 @@ if "speedtest" in checks_selected:
 
 failed_checks = [r["name"] for r in records if r.get("status") != "ok"]
 passed_checks = [r["name"] for r in records if r.get("status") == "ok"]
+expected_failed_checks = [name for name in failed_checks if name in allowed_failed_checks]
+unexpected_failed_checks = [name for name in failed_checks if name not in allowed_failed_checks]
 if len(records) == 0:
     overall_status = "error"
-elif len(failed_checks) == 0:
+elif len(unexpected_failed_checks) == 0:
     overall_status = "ok"
-elif len(passed_checks) > 0:
+elif len(passed_checks) > 0 or len(expected_failed_checks) > 0:
     overall_status = "degraded"
 else:
     overall_status = "error"
@@ -427,7 +441,10 @@ payload = {
     "timestamp_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     "status": overall_status,
     "selected_checks": checks_selected,
+    "allowed_failed_checks": allowed_failed_checks,
     "failed_checks": failed_checks,
+    "expected_failed_checks": expected_failed_checks,
+    "unexpected_failed_checks": unexpected_failed_checks,
     "passed_checks": passed_checks,
     "checks": records,
     "config": {
@@ -437,6 +454,7 @@ payload = {
         "ngc_image": ngc_image,
         "hf_model": hf_model,
         "hf_local_dir_base": hf_local_dir_base,
+        "allow_failed_checks": allowed_failed_checks,
     },
     "tool_paths": {
         "python3": python_bin,
@@ -454,7 +472,7 @@ shutil.rmtree(tmp_root, ignore_errors=True)
 print(json.dumps(payload))
 PY
 
-  remote_cmd="cd $(printf '%q' "${REMOTE_ROOT}") && python3 -c $(printf '%q' "${PY_PAYLOAD}") $(printf '%q' "${RUN_ID}") $(printf '%q' "${CHECKS}") $(printf '%q' "${TIMEOUT_SEC}") $(printf '%q' "${TORCH_VERSION}") $(printf '%q' "${TORCH_INDEX_URL}") $(printf '%q' "${NGC_IMAGE}") $(printf '%q' "${HF_MODEL}") $(printf '%q' "${HF_LOCAL_DIR_BASE}")"
+  remote_cmd="cd $(printf '%q' "${REMOTE_ROOT}") && python3 -c $(printf '%q' "${PY_PAYLOAD}") $(printf '%q' "${RUN_ID}") $(printf '%q' "${CHECKS}") $(printf '%q' "${TIMEOUT_SEC}") $(printf '%q' "${TORCH_VERSION}") $(printf '%q' "${TORCH_INDEX_URL}") $(printf '%q' "${NGC_IMAGE}") $(printf '%q' "${HF_MODEL}") $(printf '%q' "${HF_LOCAL_DIR_BASE}") $(printf '%q' "${ALLOW_FAILED_CHECKS}")"
 
   echo "Collecting quick friction battery: host=${host} label=${label}"
   if is_local_host "$host"; then
@@ -490,7 +508,10 @@ lines = [
     f"host={payload.get('host')}",
     f"timestamp_utc={payload.get('timestamp_utc')}",
     f"selected_checks={','.join(payload.get('selected_checks') or [])}",
+    f"allowed_failed_checks={','.join(payload.get('allowed_failed_checks') or [])}",
     f"failed_checks={','.join(payload.get('failed_checks') or [])}",
+    f"expected_failed_checks={','.join(payload.get('expected_failed_checks') or [])}",
+    f"unexpected_failed_checks={','.join(payload.get('unexpected_failed_checks') or [])}",
     "",
 ]
 for rec in payload.get("checks") or []:

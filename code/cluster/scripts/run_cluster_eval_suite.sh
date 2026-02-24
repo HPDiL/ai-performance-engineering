@@ -71,6 +71,10 @@ Options:
   --quick-friction-ngc-image <ref>  Container image for pull timing check (default: nvcr.io/nvidia/pytorch:24.05-py3)
   --quick-friction-hf-model <id>    HF model for download timing check (default: openai-community/gpt2)
   --quick-friction-hf-local-dir-base <path>  Base temp dir for HF download check (default: /tmp)
+  --quick-friction-allow-failed-checks <csv>  Classify these quick-friction check failures as expected (default: auto for localhost, none otherwise)
+
+  --render-localhost-report      Force rendering `cluster/field-report-localhost.md` + notes when localhost package is detected
+  --skip-render-localhost-report Disable localhost field-report package rendering
 
   --run-monitoring-expectations      Run monitoring expectations snapshot on all nodes (default: on)
   --skip-monitoring-expectations     Skip monitoring expectations snapshot
@@ -258,6 +262,7 @@ QUICK_FRICTION_TORCH_INDEX_URL="https://download.pytorch.org/whl/cu124"
 QUICK_FRICTION_NGC_IMAGE="nvcr.io/nvidia/pytorch:24.05-py3"
 QUICK_FRICTION_HF_MODEL="openai-community/gpt2"
 QUICK_FRICTION_HF_LOCAL_DIR_BASE="/tmp"
+QUICK_FRICTION_ALLOW_FAILED_CHECKS=""
 
 RUN_MONITORING_EXPECTATIONS=1
 MONITORING_EXPECTATIONS_STRICT=0
@@ -307,6 +312,8 @@ BOOTSTRAP_INSTALL_PYTHON_DEPS=1
 BOOTSTRAP_HOST_PARITY_IMAGE="${BOOTSTRAP_HOST_PARITY_IMAGE:-cfregly/cluster_perf_orig_parity:latest}"
 BOOTSTRAP_TORCH_INDEX_URL="https://pypi.ngc.nvidia.com"
 BOOTSTRAP_TORCH_VERSION="2.10.0a0+a36e1d39eb.nv26.01.42222806"
+
+RENDER_LOCALHOST_REPORT_MODE="auto"
 
 FIO_TEST_DIR="/tmp"
 FIO_RUNTIME="30"
@@ -415,6 +422,9 @@ while [[ $# -gt 0 ]]; do
     --quick-friction-ngc-image) QUICK_FRICTION_NGC_IMAGE="$2"; shift 2 ;;
     --quick-friction-hf-model) QUICK_FRICTION_HF_MODEL="$2"; shift 2 ;;
     --quick-friction-hf-local-dir-base) QUICK_FRICTION_HF_LOCAL_DIR_BASE="$2"; shift 2 ;;
+    --quick-friction-allow-failed-checks) QUICK_FRICTION_ALLOW_FAILED_CHECKS="$2"; shift 2 ;;
+    --render-localhost-report) RENDER_LOCALHOST_REPORT_MODE="on"; shift ;;
+    --skip-render-localhost-report) RENDER_LOCALHOST_REPORT_MODE="off"; shift ;;
 
     --run-monitoring-expectations) RUN_MONITORING_EXPECTATIONS=1; shift ;;
     --skip-monitoring-expectations) RUN_MONITORING_EXPECTATIONS=0; shift ;;
@@ -727,6 +737,26 @@ IFS=',' read -r -a LABEL_ARR <<<"$LABELS"
 if [[ -n "$LABELS" && "${#LABEL_ARR[@]}" -ne "${#HOST_ARR[@]}" ]]; then
   echo "ERROR: --labels count must match --hosts count" >&2
   exit 2
+fi
+
+is_local_host_name() {
+  local host="$1"
+  local h_full
+  h_full="$(hostname -f 2>/dev/null || hostname)"
+  [[ "$host" == "localhost" || "$host" == "127.0.0.1" || "$host" == "$(hostname)" || "$host" == "$(hostname -s)" || "$host" == "$h_full" ]]
+}
+
+IS_LOCALHOST_PACKAGE=0
+if [[ "${#HOST_ARR[@]}" -eq 1 ]]; then
+  host0="$(echo "${HOST_ARR[0]}" | xargs)"
+  if is_local_host_name "$host0"; then
+    IS_LOCALHOST_PACKAGE=1
+  fi
+fi
+
+if [[ "$IS_LOCALHOST_PACKAGE" -eq 1 && -z "$QUICK_FRICTION_ALLOW_FAILED_CHECKS" ]]; then
+  # Localhost canary profiles intentionally classify missing internet/ops tools as expected.
+  QUICK_FRICTION_ALLOW_FAILED_CHECKS="uv_torch_install,ip_owner,speedtest"
 fi
 
 if [[ "$RUN_VLLM_MULTINODE_MODE" == "on" ]]; then
@@ -1173,8 +1203,9 @@ echo "SSH_USER: ${SSH_USER}"
 echo "PRIMARY_LABEL: ${PRIMARY_LABEL}"
 echo "connectivity_probe: master_port=${CONNECTIVITY_PROBE_MASTER_PORT} barrier_iters=${CONNECTIVITY_PROBE_BARRIER_ITERS} payload_bytes=${CONNECTIVITY_PROBE_PAYLOAD_BYTES} timeout_sec=${CONNECTIVITY_PROBE_TIMEOUT_SEC}"
 echo "nccl_env_sensitivity: min=${NCCL_ENV_MIN_BYTES} max=${NCCL_ENV_MAX_BYTES} warmup=${NCCL_ENV_WARMUP} iters=${NCCL_ENV_ITERS}"
-echo "quick_friction: enabled=${RUN_QUICK_FRICTION} strict=${QUICK_FRICTION_STRICT} checks='${QUICK_FRICTION_CHECKS}' timeout_sec=${QUICK_FRICTION_TIMEOUT_SEC} torch=${QUICK_FRICTION_TORCH_VERSION} hf_model=${QUICK_FRICTION_HF_MODEL}"
+echo "quick_friction: enabled=${RUN_QUICK_FRICTION} strict=${QUICK_FRICTION_STRICT} checks='${QUICK_FRICTION_CHECKS}' timeout_sec=${QUICK_FRICTION_TIMEOUT_SEC} torch=${QUICK_FRICTION_TORCH_VERSION} hf_model=${QUICK_FRICTION_HF_MODEL} allow_failed='${QUICK_FRICTION_ALLOW_FAILED_CHECKS:-<none>}'"
 echo "monitoring_expectations: enabled=${RUN_MONITORING_EXPECTATIONS} strict=${MONITORING_EXPECTATIONS_STRICT} k8s_mode=${MONITORING_K8S_MODE} checks='${MONITORING_CHECKS}' sample_count=${MONITORING_SAMPLE_COUNT} dmesg_lines=${MONITORING_DMESG_LINES} timeout_sec=${MONITORING_TIMEOUT_SEC}"
+echo "render_localhost_report: mode=${RENDER_LOCALHOST_REPORT_MODE} detected_localhost=${IS_LOCALHOST_PACKAGE}"
 if [[ "${#HOST_ARR[@]}" -gt 1 ]]; then
   echo "OOB_IF: ${OOB_IF:-<unset>}"
   echo "NCCL_SOCKET_IFNAME: ${SOCKET_IFNAME:-<unset>}"
@@ -1278,6 +1309,9 @@ if [[ "$RUN_QUICK_FRICTION" -eq 1 ]]; then
     --hf-model "$QUICK_FRICTION_HF_MODEL"
     --hf-local-dir-base "$QUICK_FRICTION_HF_LOCAL_DIR_BASE"
   )
+  if [[ -n "$QUICK_FRICTION_ALLOW_FAILED_CHECKS" ]]; then
+    quick_friction_args+=(--allow-failed-checks "$QUICK_FRICTION_ALLOW_FAILED_CHECKS")
+  fi
   if [[ -n "$LABELS" ]]; then
     quick_friction_args+=(--labels "$LABELS")
   fi
@@ -2089,6 +2123,22 @@ if [[ -n "$LABELS" ]]; then
   manifest_args+=(--labels "$LABELS")
 fi
 run_step "manifest_refresh" python3 "${ROOT_DIR}/scripts/write_manifest.py" "${manifest_args[@]}"
+
+RENDER_LOCALHOST_REPORT=0
+if [[ "$RENDER_LOCALHOST_REPORT_MODE" == "on" ]]; then
+  RENDER_LOCALHOST_REPORT=1
+elif [[ "$RENDER_LOCALHOST_REPORT_MODE" == "auto" && "$IS_LOCALHOST_PACKAGE" -eq 1 ]]; then
+  RENDER_LOCALHOST_REPORT=1
+fi
+
+if [[ "$RENDER_LOCALHOST_REPORT" -eq 1 ]]; then
+  localhost_label="$(label_for_index 0)"
+  run_step "render_localhost_field_report_package" python3 "${ROOT_DIR}/scripts/render_localhost_field_report_package.py" \
+    --run-id "${RUN_ID}" \
+    --label "${localhost_label}" \
+    --report "${ROOT_DIR}/field-report-localhost.md" \
+    --notes "${ROOT_DIR}/field-report-localhost-notes.md"
+fi
 
 echo ""
 echo "========================================"

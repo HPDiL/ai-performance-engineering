@@ -12,6 +12,7 @@ shift 7
 CONCURRENCY_RANGE="$@"
 
 export VLLM_USE_FLASHINFER_MOE_MXFP4_MXFP8=1
+VLLM_SERVE_ENFORCE_EAGER="${VLLM_SERVE_ENFORCE_EAGER:-1}"
 
 if [[ "$MODEL" == *"gpt-oss"* ]]; then
   export VLLM_MXFP4_USE_MARLIN=1
@@ -33,12 +34,23 @@ cleanup() {
 trap cleanup EXIT
 
 echo "=== Starting vLLM Server ==="
-vllm serve "$MODEL" --host 0.0.0.0 --port "$PORT" \
-  --gpu-memory-utilization 0.9 \
-  --tensor-parallel-size "$TP" \
-  --max-model-len "$MAX_MODEL_LEN" \
-  --max-num-seqs 1024 \
-  --disable-log-requests >"$SERVER_LOG" 2>&1 &
+SERVE_ARGS=(
+  "$MODEL"
+  --host 0.0.0.0
+  --port "$PORT"
+  --gpu-memory-utilization 0.9
+  --tensor-parallel-size "$TP"
+  --max-model-len "$MAX_MODEL_LEN"
+  --max-num-seqs 1024
+  --disable-log-requests
+)
+
+if [[ "$VLLM_SERVE_ENFORCE_EAGER" == "1" ]]; then
+  echo "Enabling --enforce-eager for startup robustness."
+  SERVE_ARGS+=(--enforce-eager)
+fi
+
+vllm serve "${SERVE_ARGS[@]}" >"$SERVER_LOG" 2>&1 &
 
 SERVER_PID=$!
 echo "Server PID: $SERVER_PID"

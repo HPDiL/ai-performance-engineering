@@ -179,6 +179,11 @@ require_file "$NOTES"
 require_file "$TEMPLATE"
 require_file "$RUNBOOK"
 
+report_base="$(basename "$REPORT")"
+if [[ "$report_base" == *_environment_report.md ]]; then
+  fail "environment-only report is not allowed as canonical field report (${REPORT})"
+fi
+
 if [[ $failures -gt 0 ]]; then
   echo "Validation aborted due to missing input files."
   exit 1
