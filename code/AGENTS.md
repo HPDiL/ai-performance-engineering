@@ -289,13 +289,29 @@
   - Static-input ABAB is also net-positive in the latest pass (`delta_old_minus_new~+0.0558 us`, `4/6` wins for new default), with higher variance on old path.
   - Additional host-overhead fix landed in `GemmPlanT::update_ptrs_from_tensors`: preallocate and reuse pinned host pointer scratch per plan (no per-call `torch::empty`); this further reduces fresh retarget overhead without changing math paths.
   - New packed pointer-table fast path landed in `GemmPlanT::update_ptrs_from_tensors`: when pointer tensors are row-views over one `[6, G]` table, use one `cudaMemcpyAsync` for all rows; fallback remains row-wise copies for non-packed layouts.
+  - Router-path default update (2026-02-27, late pass): keep `AISP_NVFP4_GROUP_GEMM_SKIP_PTR_UPDATE_ON_SAME_DATA=1` and `AISP_NVFP4_GROUP_GEMM_SINGLE_SLOT_FAST=1`, and set `AISP_NVFP4_GROUP_GEMM_ENABLE_DATA_FAST_CACHE=1` by default.
+    - Correctness/root-cause fix: runtime cache skip checks must use object identity (`last_data_ref is data`) instead of integer `id(data)` equality to avoid false same-data hits from Python id reuse.
+    - Validation summary: fresh ABAB (`6` pairs, no-verify timing gate) strongly favors `ENABLE_DATA_FAST_CACHE=1` (`delta_B_minus_A~-23.24 us/group`, stdev `~1.85`), while static ABAB is neutral/slightly positive (`delta_B_minus_A~-0.029 us/group`).
+  - Fresh-input router-path non-promotion (2026-02-27): keep `AISP_NVFP4_GROUP_GEMM_SINGLE_SLOT_FAST=1` as default.
+    - ABAB10 fresh for `SINGLE_SLOT_FAST=0` remained non-promotable (mean/median/trimmed geomean regressed), even when case2/case3 means could look better in short runs.
   - Post-packed-copy ABAB confirms promotion on current tuned route:
     - Static ABAB (`4` pairs): `delta_old_minus_new~+0.0769 us` (`3/4` wins for native path).
     - Fresh ABAB (`4` pairs): `delta_old_minus_new~+27.13 us` (`4/4` wins for native path).
-  - Case2 variant retest after host-path improvements is still non-promotable: `1sm_n128_case23` looked best in short screen, but 6-pair ABAB vs current `1sm_n128_case23_s4` regressed (`delta_B_minus_A~+0.0384 us`), so keep case2 default as `s4`.
-  - Case3 retune on top of the packed-copy path promoted `1sm_n128_case23_s4` over `s5`:
-    - Static ABAB (`6` pairs): `delta_B_minus_A~ -0.0221 us` (`4/6` wins for `s4`).
-    - Fresh ABAB is noisier but mean-favorable in extended check (`6` pairs: `delta_B_minus_A~ -0.4946 us`).
+  - Case2 variant retest after host-path improvements is still non-promotable: `1sm_n128_case23` looked best in short screen, but 6-pair ABAB vs current `1sm_n128_case2_nvf4` route regressed (`delta_B_minus_A~+0.0384 us`), so keep case2 default on `1sm_n128_case2_nvf4`.
+  - Latest case2 block-scaled retest against NVF4 (with case3 pinned to `1sm_n128_case3`) remains non-promotable:
+    - Candidate `case2=1sm_n128_case2` vs baseline `case2=1sm_n128_case2_nvf4` gave static regression (`delta_B_minus_A~+0.0456 us/group`) despite fresh improvement (`delta_B_minus_A~-0.7568 us/group`) and worse strict-verify timing geomean.
+    - Keep case2 default on `1sm_n128_case2_nvf4`.
+  - Deeper case2 CUDA-side additions from this pass are not promotable:
+    - New lane `1sm_n256_case2_nvf4` (N=256, K=256 NVF4 schedule) is strict-verify green but regresses heavily (`case2~29 us/group`, ABAB mean geomean delta `~+1.944 us/group` vs `1sm_n128_case2_nvf4`).
+    - Proposed `1sm_n128_case2_nvf4_s5` is architecturally invalid on SM100: compile-time static assertion `SMEM usage exceeded capacity`; keep NVF4 case2 stage family capped at S4.
+    - Forcing case2 onto 2SM families (`2sm`, `2sm_n64*`, `2sm_n128*`) currently fails `CUTLASS can_implement()` in this submission path; treat those as illegal for case2 routing unless kernel contracts change.
+  - Case3 retune (2026-02-27, latest pass) final promotion is `1sm_n128_case3`:
+    - Step 1 candidate (`case3_nvf4` vs `case23_s4`) was verify-green and directionally positive, but follow-up combo/ABAB checks found a better stable choice.
+    - Step 2 decisive gate (`case3` vs `case3_nvf4`): strict verify green; ABAB (`6` pairs, warmup=2/repeats=12) gave static `delta_B_minus_A~-0.0084 us/group` and fresh `delta_B_minus_A~-0.8381 us/group`.
+    - Router default now uses `case3=1sm_n128_case3`.
+  - Current promoted defaults stability snapshot (`case2=1sm_n128_case2_nvf4`, `case3=1sm_n128_case3`, 3x runs, warmup=3/repeats=20):
+    - static geomean/group mean `~10.5669 us` (stdev `~0.0576`)
+    - fresh geomean/group mean `~43.2791 us` (stdev `~0.5202`)
 - Current verified per-case CTA order routing for v2 path: `case0=tn_major`, `case1=tm_major`, `case2=tm_major`, `case3=tn_major`.
 - `AISP_NVFP4_GROUP_GEMM_V2_ASSUME_NO_N_TAIL=1` is verify-green and ABAB-positive for case0/case1/case2 on the tuned UnrollN=2 build; keep it disabled for case3 where it regresses.
 - `AISP_NVFP4_GROUP_GEMM_V2_FUSE_INPUTS_COMPRESS_LIST=1` must retain all fused-slot contexts (including padded tensors) to avoid graph-mode illegal-address failures; keep this behind explicit opt-in unless repeated ABAB shows net geomean gain.
@@ -306,6 +322,15 @@
   - `UNROLL_N=1, CTA2_PARTITION_B=1` verifies but is far slower (`~66 us/call` for case2).
   - `UNROLL_N=1, CTA2_PARTITION_B=0` fails verify.
   - `UNROLL_N=2` cta2 paths remain correctness-unsafe (`CTA2_PARTITION_B=0` fails verify; `CTA2_PARTITION_B=1` can hang).
+- CUTLASS SM100 block-scaled 1SM legality constraint:
+  - `TileShape_M` is hard-constrained to `128` for this kernel family; attempted `M=64` case2 lane (`1sm_m64_n128_case2`) fails compile-time static assertions and must not be retried.
+- Case2 exploratory kernel lane `1sm_n128_k512_case2` is non-promotable:
+  - strict all-case check showed a severe regression (`case2` around `~38.7 us/group`, geomean regression `~+2.16 us`), so this lane should remain removed.
+- Recent strict sweeps (current tuned router defaults) remain non-promotable across these branches:
+  - `1sm_n128_k128_case2_nvf4`: best tunable point still materially slower than current defaults.
+  - `1sm_n128_case2` vs `1sm_n128_case2_nvf4`: ABAB mean geomean delta was near zero (`~ -0.004 us`) with high stdev; treat as noise/no promotion.
+  - case0-only and case1-only 2SM tunable sweeps (`cluster/raster/pdl/swizzle`) did not beat current all-case baseline.
+  - latest case3 full variant re-screen and ABAB gating identify `1sm_n128_case3` (non-NVF4) as the current best promotable default; older “no better case3 variant” result is superseded.
 
 ## Expectations Files (CRITICAL)
 - Expectation baselines live next to each chapter as `expectations_{hardware_key}.json`.

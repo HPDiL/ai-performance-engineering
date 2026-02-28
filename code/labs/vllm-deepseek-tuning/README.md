@@ -81,6 +81,17 @@ python3 scripts/run_matrix.py \
   --vllm-cmd ./scripts/vllm_docker.sh
 ```
 
+Parallel behavior is auto-adaptive by default:
+- `--parallel-policy auto` (default): downshifts TP/DP to fit detected local GPUs.
+- In `auto`, startup CUDA OOM triggers one retry with conservative fallback args (`--cpu-offload-gb`, reduced `--max-model-len`, lower GPU memory utilization).
+- `--parallel-policy strict`: keeps configured TP/DP and skips infeasible runs.
+
+Failure behavior is configurable:
+- `--fail-fast oom` (default): stop the matrix on first unrecoverable CUDA OOM startup failure.
+- `--fail-fast startup`: stop on first startup failure of any kind.
+- `--fail-fast any`: equivalent to startup.
+- `--fail-fast none`: continue through all runs and collect all failures.
+
 ## Runbook
 
 From this lab directory:
@@ -138,6 +149,11 @@ This goes beyond raw output by computing concise deltas and direct conclusions.
 - Absolute throughput is hardware-dependent.
 - Relative comparisons (TP/EP/MTP deltas, model-vs-model ratios) are the most transferable.
 - Failed run records are preserved for auditability but excluded from best-of metrics.
+- The default blog matrix has TP/DP world sizes of 2-4.
+- With `--parallel-policy auto`, single-GPU nodes run adapted TP1/DP1 variants automatically.
+- With `--parallel-policy strict`, infeasible TP/DP runs are preflight-skipped.
+- Some DeepSeek NVFP4 checkpoints may still exceed single-GPU memory capacity even after fallback retry; these are captured as startup-failure artifacts.
+- Startup-failure artifacts include `startup_error_kind`, parsed `oom_diagnostics`, and a `gpu_snapshot` for debugging.
 
 ## Design choices
 
