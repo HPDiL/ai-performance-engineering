@@ -53,6 +53,10 @@ void warp_specialized_kernel_two_pipelines_multistream(const float* __restrict__
 
     __shared__ alignas(pipe_state) unsigned char state_storage[sizeof(pipe_state)];
     auto* storage_ptr = reinterpret_cast<pipe_state*>(state_storage);
+    if (threadIdx.x == 0) {
+        new (storage_ptr) pipe_state();
+    }
+    block.sync();
     auto pipe = cuda::make_pipeline(block, storage_ptr);
 
     const int warp_id = threadIdx.x / kWarpSize;

@@ -87,7 +87,7 @@ def _chapter_run_commands(slug: str) -> RunSection:
     ]
     notes = [
         "Override `--profile` or `--iterations` per workload when capturing Nsight traces.",
-        "Benchmark validity profile defaults to strict. Use `--validity-profile portable` only when strict fails on virtualized or hardware-limited environments.",
+        "Benchmark validity profile defaults to strict. Virtualization is warning-only; use `--validity-profile portable` for broader compatibility on hardware-limited environments.",
         "Expectation baselines live next to each chapter in `expectations_{hardware_key}.json`; refresh with `--update-expectations` after validating new hardware. In portable mode, add `--allow-portable-expectations-update` to write expectation files explicitly.",
     ]
     return RunSection(commands=commands, notes=notes)
@@ -102,7 +102,7 @@ def _lab_run_commands(slug: str) -> RunSection:
     notes = [
         f"Targets follow the `{slug}:<workload>` naming convention listed by `list-targets`.",
         f"Use `--target-extra-arg {slug}:<workload>=\"--flag value\"` to sweep schedule knobs.",
-        "Benchmark validity profile defaults to strict. Use `--validity-profile portable` only when strict fails on virtualized or hardware-limited environments.",
+        "Benchmark validity profile defaults to strict. Virtualization is warning-only; use `--validity-profile portable` for broader compatibility on hardware-limited environments.",
         "Portable runs do not write expectation files unless `--allow-portable-expectations-update` is also provided.",
     ]
     return RunSection(commands=commands, notes=notes)
@@ -166,8 +166,8 @@ WALL_OF_SHAME = dedent(
     measure replay, not capture). It is NOT allowed to precompute and reuse the final output from `setup()`. The output
     used for verification must come from the timed `benchmark_fn()` run and be surfaced via `capture_verification_payload()`.
 
-    Virtualization Note: `validate_environment()` treats virtualization (hypervisor present) as invalid. Benchmarks are
-    supported only on bare metal.
+    Virtualization Note: `validate_environment()` treats virtualization (hypervisor present) as a warning. Benchmarks can
+    run in virtualized environments, but bare metal remains the preferred source for final performance numbers.
 
     ### Benchmark Validity Issues Reference
 
@@ -384,7 +384,7 @@ ENTRIES["README.md"] = Entry(
         ],
         notes=[
             "`setup.sh` installs system prerequisites (drivers, CUDA, Nsight) and should be rerun after driver upgrades.",
-            "Benchmark validity profile defaults to strict. Use `--validity-profile portable` only for explicit compatibility runs on virtualized or hardware-limited hosts.",
+            "Benchmark validity profile defaults to strict. Virtualization is warning-only; use `--validity-profile portable` for broader compatibility on hardware-limited hosts.",
             "Use `python -m cli.aisp bench expectations --hardware b200 --min-speedup 1.05` to report expectation entries below a target threshold.",
             "Use `python -m cli.aisp bench run --targets ch*` for automated regression suites.",
             "Portable runs do not update expectation files unless `--allow-portable-expectations-update` is supplied.",

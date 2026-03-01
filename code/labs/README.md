@@ -6,6 +6,8 @@ Labs are end-to-end optimization stories that combine multiple chapter technique
 
 | Lab | Summary | Suggested Chapters |
 | --- | --- | --- |
+| `labs/nvfp4_gemv/` | GPUMODE `nvfp4_gemv` challenge workspace | ch06, ch10 |
+| `labs/nvfp4_gemm/` | GPUMODE `nvfp4_gemm` challenge workspace | ch06, ch09, ch10 |
 | `labs/async_input_pipeline/` | Async CPU→GPU input overlap | ch02, ch05, ch11 |
 | `labs/blackwell_matmul/` | Matmul suite focused on Blackwell | ch06, ch09, ch10 |
 | `labs/cudnn_sdpa_bench/` | cuDNN SDPA benchmarking | ch10, ch18 |

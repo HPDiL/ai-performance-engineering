@@ -16,6 +16,42 @@ Run the suite (baseline vs optimized) with profiling:
 python -m cli.aisp bench run --targets labs/nvfp4_group_gemm --profile deep_dive --update-expectations
 ```
 
+### V2 Apples-to-Apples Matrix (Kernel Headroom)
+
+Use the v2 matrix runner to force the same graph/fuse settings for baseline and optimized
+wrappers, then compare speedups without those confounders:
+
+```bash
+python labs/nvfp4_group_gemm_v2/benchmark_matrix_headroom.py \
+  --cases case0 case1 case2 case3 \
+  --graph-values 0,1 \
+  --fuse-values 0,1 \
+  --timing-method wall_clock \
+  --cross-validate-timing 0 \
+  --profile none \
+  --iterations 25 \
+  --warmup 5
+```
+
+The runner sets these overrides per matrix cell:
+- `AISP_NVFP4_GROUP_GEMM_V2_CAPTURE_ITER_GRAPH=0|1`
+- `AISP_NVFP4_GROUP_GEMM_V2_FUSE_INPUTS=0|1`
+
+and writes a summary JSON under `artifacts/runs/<run_prefix>__summary.json`.
+
+Current fast defaults (promoted from matrix results):
+- v2 runtime defaults to fused-input launch mode (`AISP_NVFP4_GROUP_GEMM_V2_FUSE_INPUTS=1` unless explicitly set).
+- fused mode defaults to compressed logical callsites (`AISP_NVFP4_GROUP_GEMM_V2_FUSE_INPUTS_COMPRESS_LIST=1`) to cut host-loop overhead.
+- v2 benchmark wrappers use iter-graph capture by default (`capture_iter_graph=True`).
+- To force non-fused/non-graph behavior for diagnostics, set:
+  - `AISP_NVFP4_GROUP_GEMM_V2_FUSE_INPUTS=0`
+  - `AISP_NVFP4_GROUP_GEMM_V2_FUSE_INPUTS_COMPRESS_LIST=0`
+  - `AISP_NVFP4_GROUP_GEMM_V2_CAPTURE_ITER_GRAPH=0`
+
+Build-cache safety:
+- v2 extension naming now appends a deterministic hash of compile-time CUDA flags/source file,
+  so compile-flag sweeps do not reuse stale builds under the same base extension namespace.
+
 Notes:
 - The baseline uses a straightforward CuTe DSL implementation (close to the official starter).
 - The CuTe DSL optimized variants remove per-call allocations by caching metadata tensors and

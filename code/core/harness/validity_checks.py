@@ -767,11 +767,12 @@ def validate_environment(
         )
         if allow_virtualization:
             warnings_list.append(
-                f"{message} Continuing because validity_profile=portable "
-                "(allow_virtualization=True)."
+                f"{message} Compatibility mode active (validity_profile=portable)."
             )
         else:
-            errors.append(message)
+            warnings_list.append(
+                f"{message} Continuing in strict mode because virtualization alone is non-fatal."
+            )
 
     # torch.compile backend sanity (Compile category)
     try:

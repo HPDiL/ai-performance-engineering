@@ -25,7 +25,7 @@ python -m cli.aisp bench run --targets labs/fullstack_cluster --profile minimal
 ```
 - Targets follow the `labs/fullstack_cluster:<workload>` naming convention listed by `list-targets`.
 - Use `--target-extra-arg labs/fullstack_cluster:<workload>="--flag value"` to sweep schedule knobs.
-- Benchmark validity profile defaults to strict. Use `--validity-profile portable` only when strict fails on virtualized or hardware-limited environments.
+- Benchmark validity profile defaults to strict. Virtualization is warning-only; use `--validity-profile portable` for broader compatibility on hardware-limited environments.
 - Portable runs do not write expectation files unless `--allow-portable-expectations-update` is also provided.
 
 ## Validation Checklist

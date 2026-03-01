@@ -29,7 +29,7 @@ python -m cli.aisp bench list-targets --chapter ch01
 python -m cli.aisp bench run --targets ch01 --profile minimal
 ```
 - `setup.sh` installs system prerequisites (drivers, CUDA, Nsight) and should be rerun after driver upgrades.
-- Benchmark validity profile defaults to strict. Use `--validity-profile portable` only for explicit compatibility runs on virtualized or hardware-limited hosts.
+- Benchmark validity profile defaults to strict. Virtualization is warning-only; use `--validity-profile portable` for broader compatibility on hardware-limited hosts.
 - Use `python -m cli.aisp bench expectations --hardware b200 --min-speedup 1.05` to report expectation entries below a target threshold.
 - Use `python -m cli.aisp bench run --targets ch*` for automated regression suites.
 - Portable runs do not update expectation files unless `--allow-portable-expectations-update` is supplied.
@@ -50,8 +50,8 @@ CUDA Graph Note: Capturing CUDA graphs in `setup()` is allowed for steady-state 
 measure replay, not capture). It is NOT allowed to precompute and reuse the final output from `setup()`. The output
 used for verification must come from the timed `benchmark_fn()` run and be surfaced via `capture_verification_payload()`.
 
-Virtualization Note: `validate_environment()` treats virtualization (hypervisor present) as invalid. Benchmarks are
-supported only on bare metal.
+Virtualization Note: `validate_environment()` treats virtualization (hypervisor present) as a warning. Benchmarks can
+run in virtualized environments, but bare metal remains the preferred source for final performance numbers.
 
 ### Benchmark Validity Issues Reference
 

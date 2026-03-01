@@ -816,9 +816,9 @@ class BenchmarkConfig:
     )
     """Fail-fast when validate_environment() reports errors.
 
-    This should remain enabled for performance benchmarking. Disable only for
-    correctness/unit-test contexts where virtualization or host policy checks
-    would otherwise prevent exercising the harness logic.
+    This should remain enabled for performance benchmarking. Virtualization is
+    warning-only; disabling this gate is still useful only for correctness/unit
+    test contexts where other host policy checks are intentionally bypassed.
     """
 
     validity_profile: str = field(default_factory=lambda: _get_default_value("validity_profile", "strict"))
@@ -829,11 +829,10 @@ class BenchmarkConfig:
     """
 
     allow_virtualization: bool = field(default_factory=lambda: _get_default_value("allow_virtualization", False))
-    """Allow running benchmarks under virtualization (VM/hypervisor).
+    """Compatibility flag retained for profile behavior wiring.
 
-    Disabled by default in strict mode.
-    Only the virtualization check is downgraded when enabled; other
-    environment errors remain fatal when enforce_environment_validation=True.
+    Virtualization is warning-only in all profiles; this flag remains for
+    profile-level compatibility semantics (for example telemetry relaxations).
     """
 
     # Legacy timeout field (deprecated, use measurement_timeout_seconds)
