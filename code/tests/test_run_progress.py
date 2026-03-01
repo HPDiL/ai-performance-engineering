@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import time
+import uuid
 from pathlib import Path
 
 import mcp.mcp_server as mcp_server
@@ -73,3 +75,62 @@ def test_progress_phases_include_llm() -> None:
         "llm_explain",
     ):
         assert key in phases
+
+
+def test_job_status_running_without_artifacts_reports_effective_queued(tmp_path: Path) -> None:
+    store = mcp_server.JOB_STORE
+    job_id = f"run_benchmarks-{uuid.uuid4().hex[:8]}"
+    run_dir = tmp_path / "artifacts" / "missing_run"
+    with store._lock:
+        store._store[job_id] = {
+            "job_id": job_id,
+            "tool": "run_benchmarks",
+            "status": "running",
+            "submitted_at": time.time(),
+            "run_id": "run_missing",
+            "run_dir": str(run_dir),
+            "progress_path": str(run_dir / "progress" / "run_progress.json"),
+        }
+    try:
+        payload = mcp_server.tool_job_status({"job_id": job_id})
+        assert payload["status"] == "queued"
+        assert payload["reported_status"] == "running"
+    finally:
+        with store._lock:
+            store._store.pop(job_id, None)
+
+
+def test_job_status_queued_with_progress_reports_effective_running(tmp_path: Path) -> None:
+    run_dir = tmp_path / "artifacts" / "20250101_000003"
+    progress_path = run_dir / "progress" / "run_progress.json"
+    recorder = ProgressRecorder(run_id="run_003", progress_path=progress_path)
+    recorder.emit(
+        ProgressEvent(
+            phase="preflight",
+            phase_index=1,
+            total_phases=4,
+            step="ch10:atomic_reduction",
+        )
+    )
+
+    store = mcp_server.JOB_STORE
+    job_id = f"run_benchmarks-{uuid.uuid4().hex[:8]}"
+    with store._lock:
+        store._store[job_id] = {
+            "job_id": job_id,
+            "tool": "run_benchmarks",
+            "status": "queued",
+            "submitted_at": time.time(),
+            "run_id": "run_003",
+            "run_dir": str(run_dir),
+            "progress_path": str(progress_path),
+            "note": "Waiting for MCP queue runner.",
+        }
+    try:
+        payload = mcp_server.tool_job_status({"job_id": job_id})
+        assert payload["status"] == "running"
+        assert payload["reported_status"] == "queued"
+        assert payload["progress"]["phase"] == "preflight"
+    finally:
+        with store._lock:
+            store._store.pop(job_id, None)

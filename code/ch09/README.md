@@ -39,3 +39,5 @@ python -m cli.aisp bench run --targets ch09 --profile minimal
 ## Notes
 - `inline_ptx_example.cu` demonstrates how to wrap tcgen05 intrinsics safely with architecture guards.
 - `requirements.txt` includes Triton nightly pinning so the kernels track PyTorch 2.10-dev features.
+- `baseline_cutlass_gemm_fp8.py` and `optimized_cutlass_gemm_fp8.py` currently target a SM90 CUTLASS FP8 kernel.
+  On SM100+ (for example B200), the harness now fails fast with `SKIPPED` instead of running an incompatible binary.

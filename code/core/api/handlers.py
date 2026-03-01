@@ -167,11 +167,20 @@ def _normalize_status(value: Optional[str]) -> Optional[str]:
     return lowered
 
 
+def _status_bucket(value: Optional[str]) -> Optional[str]:
+    normalized = _normalize_status(value)
+    if normalized is None:
+        return None
+    if normalized.startswith("failed_"):
+        return "failed"
+    return normalized
+
+
 def _build_summary(benchmarks: Sequence[Dict[str, Any]], raw_summary: Dict[str, Any]) -> Dict[str, Any]:
     total = len(benchmarks)
-    succeeded = sum(1 for b in benchmarks if _normalize_status(b.get("status")) == "succeeded")
-    failed = sum(1 for b in benchmarks if _normalize_status(b.get("status")) == "failed")
-    skipped = sum(1 for b in benchmarks if _normalize_status(b.get("status")) == "skipped")
+    succeeded = sum(1 for b in benchmarks if _status_bucket(b.get("status")) == "succeeded")
+    failed = sum(1 for b in benchmarks if _status_bucket(b.get("status")) == "failed")
+    skipped = sum(1 for b in benchmarks if _status_bucket(b.get("status")) == "skipped")
     avg_speedup = float(raw_summary.get("avg_speedup", 0) or 0)
     max_speedup = float(raw_summary.get("max_speedup", 0) or 0)
     min_speedup = float(raw_summary.get("min_speedup", 0) or 0)
@@ -231,7 +240,7 @@ def _filter_benchmarks(
     benchmark_name: Optional[str] = None,
     optimization_goal: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    normalized_status = {_normalize_status(value) for value in status_filters or []}
+    normalized_status = {_status_bucket(value) for value in status_filters or []}
     normalized_status.discard(None)
     normalized_chapters = {value.lower() for value in chapter_filters or []}
     target_name = benchmark_name.lower() if benchmark_name else None
@@ -240,7 +249,7 @@ def _filter_benchmarks(
 
     results: List[Dict[str, Any]] = []
     for bench in benchmarks:
-        status = _normalize_status(bench.get("status"))
+        status = _status_bucket(bench.get("status"))
         chapter = str(bench.get("chapter", "")).lower()
         name = str(bench.get("name", "")).lower()
         if normalized_status and status not in normalized_status:
@@ -428,7 +437,7 @@ def benchmark_overview(_: Dict[str, Any]) -> Dict[str, Any]:
         )
         entry["count"] += 1
         speedup = float(bench.get("speedup", 0) or 0)
-        if _normalize_status(bench.get("status")) == "succeeded":
+        if _status_bucket(bench.get("status")) == "succeeded":
             entry["succeeded"] += 1
             entry["avg_speedup"] += speedup
             entry["max_speedup"] = max(entry["max_speedup"], speedup)

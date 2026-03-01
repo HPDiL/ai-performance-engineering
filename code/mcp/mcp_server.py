@@ -2602,6 +2602,8 @@ def tool_run_benchmarks(params: Dict[str, Any]) -> Dict[str, Any]:
     precheck_only = bool(params.get("precheck_only", False))
     dry_run = bool(params.get("dry_run") or params.get("estimate_only"))
     run_async = bool(params.get("async", False))
+    queue_job_id_raw = params.get("_queue_job_id")
+    queue_job_id = str(queue_job_id_raw).strip() if queue_job_id_raw else None
     timeout_param = params.get("timeout_seconds")
     timeout_seconds = None if timeout_param is None else int(timeout_param)
     if test_mode and (timeout_seconds is None or timeout_seconds <= 0):
@@ -2654,6 +2656,7 @@ def tool_run_benchmarks(params: Dict[str, Any]) -> Dict[str, Any]:
             sync_params["artifacts_dir"] = str(artifacts_dir)
 
         job_id = f"run_benchmarks-{uuid.uuid4().hex[:10]}"
+        sync_params["_queue_job_id"] = job_id
         run_metadata = {
             "run_id": run_id,
             "run_dir": str(run_dir) if run_dir else None,
@@ -2809,7 +2812,7 @@ def tool_run_benchmarks(params: Dict[str, Any]) -> Dict[str, Any]:
             report_format=report_format,
         )
 
-    result = _execute_benchmarks()
+    result = _execute_benchmarks(queue_job_id=queue_job_id)
     # Add suggested next steps to help users continue their workflow
     result["suggested_next_steps"] = _benchmark_next_steps(result)
     result["run_id"] = run_id
@@ -8635,6 +8638,25 @@ def tool_job_status(params: Dict[str, Any]) -> Dict[str, Any]:
         payload["progress_history"] = progress_payload.get("history", [])[-5:]
         if progress_path:
             payload["progress_path"] = str(progress_path)
+    reported_status = str(payload.get("status", "") or "")
+    effective_status = reported_status
+    run_dir_path: Optional[Path] = None
+    run_dir_value = payload.get("run_dir")
+    if run_dir_value:
+        run_dir_path = Path(str(run_dir_value))
+    run_dir_exists = bool(run_dir_path and run_dir_path.exists())
+    has_progress = bool(progress_payload)
+    note_text = str(payload.get("note", "")).lower()
+    waiting_for_queue_runner = "waiting for mcp queue runner" in note_text
+
+    if reported_status == "running" and (waiting_for_queue_runner or (not run_dir_exists and not has_progress)):
+        effective_status = "queued"
+    elif reported_status == "queued" and has_progress:
+        effective_status = "running"
+
+    if effective_status != reported_status:
+        payload["reported_status"] = reported_status
+        payload["status"] = effective_status
     if "success" not in payload:
         payload["success"] = payload.get("status") not in {"error", "not_found"}
     return attach_context_if_requested(payload, include_context, context_level)
