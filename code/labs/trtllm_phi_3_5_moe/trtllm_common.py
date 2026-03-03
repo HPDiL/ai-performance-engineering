@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Optional, Tuple
 
 import importlib.machinery
+import importlib.metadata
 import importlib.util
 import os
 import platform
@@ -37,6 +38,49 @@ def _suppress_optional_vllm_plugin_warning() -> None:
         message=r"Failed to import vllm plugin due to: .*You may ignore this warning if you do not need this plugin\.",
         category=UserWarning,
     )
+
+
+def disable_accelerate_transformer_engine() -> None:
+    """Disable optional FP8/vision package probing for this text-only lab.
+
+    The Phi-3.5-MoE TRT-LLM benchmark does not use Transformer Engine, but
+    `transformers` may import `accelerate`, which can eagerly probe optional TE
+    modules. On benchmark hosts with mixed TE packaging/ABI state this can cause
+    non-deterministic warnings or import failures during profiler subprocesses.
+    We also hide torchvision so text-only model loads do not trip host-specific
+    torchvision/torch ABI mismatches in profiler child processes.
+    """
+    if os.environ.get("AISP_DISABLE_ACCELERATE_TE_PATCHED", "0") == "1":
+        return
+
+    te_packages = {
+        "transformer_engine",
+        "transformer_engine_torch",
+        "transformer_engine_cu12",
+        "transformer_engine_cu13",
+        "torchvision",
+    }
+
+    original_find_spec = importlib.util.find_spec
+    original_metadata = importlib.metadata.metadata
+
+    def _normalize_package_name(name: str) -> str:
+        return str(name).replace("-", "_").lower()
+
+    def _patched_find_spec(name, *args, **kwargs):
+        normalized = _normalize_package_name(name)
+        if normalized.startswith("transformer_engine") or normalized.startswith("torchvision"):
+            return None
+        return original_find_spec(name, *args, **kwargs)
+
+    def _patched_metadata(name, *args, **kwargs):
+        if _normalize_package_name(name) in te_packages:
+            raise importlib.metadata.PackageNotFoundError(name)
+        return original_metadata(name, *args, **kwargs)
+
+    importlib.util.find_spec = _patched_find_spec
+    importlib.metadata.metadata = _patched_metadata
+    os.environ["AISP_DISABLE_ACCELERATE_TE_PATCHED"] = "1"
 
 
 def resolve_default_engine_path() -> Path:

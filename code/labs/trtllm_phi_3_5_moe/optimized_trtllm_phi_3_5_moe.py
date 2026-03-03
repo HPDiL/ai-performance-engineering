@@ -16,6 +16,7 @@ from core.benchmark.verification_mixin import VerificationPayloadMixin
 from core.harness.benchmark_harness import BaseBenchmark, BenchmarkConfig, WorkloadMetadata
 from labs.trtllm_phi_3_5_moe.trtllm_common import (
     build_prompt_tokens,
+    disable_accelerate_transformer_engine,
     ensure_trtllm_assets,
     load_trtllm_runtime,
     parse_trtllm_args,
@@ -59,6 +60,7 @@ class OptimizedTrtLlmPhi35MoeBenchmark(VerificationPayloadMixin, BaseBenchmark):
         torch.manual_seed(42)
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(42)
+        disable_accelerate_transformer_engine()
         try:
             from transformers import AutoTokenizer
         except ImportError as exc:
