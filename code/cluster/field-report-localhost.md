@@ -1,6 +1,6 @@
 # Cluster Perf Field Report (Localhost, 1 Node)
 
-Last updated: 2026-03-07. Canonical run: `2026-03-07_localhost_modern_profile_r30_full20b`.
+Last updated: 2026-03-08. Canonical run: `2026-03-08_localhost_modern_profile_r32_full20b`.
 
 ## Table of Contents
 1. [TL;DR](#tldr)
@@ -26,10 +26,10 @@ Last updated: 2026-03-07. Canonical run: `2026-03-07_localhost_modern_profile_r3
 | Topic | Summary |
 | --- | --- |
 | Scope | `localhost` only, 1 GPU(s) |
-| Canonical run | `2026-03-07_localhost_modern_profile_r30_full20b` |
-| Suite status | `44/46` steps green; `validate_required_artifacts=1` |
-| Networking headline | NCCL single-node peak algbw `2271.3 GB/s` (67108864 bytes); connectivity probe `119.633 GB/s` payload algbw |
-| Inference headline | vLLM total throughput `1075.163 tok/s` (c=32) -> `13912.017 tok/s` (c=512); p99 TTFT `637.335 ms` -> `6658.368 ms` |
+| Canonical run | `2026-03-08_localhost_modern_profile_r32_full20b` |
+| Suite status | `50/50` steps green; `validate_required_artifacts=0` |
+| Networking headline | NCCL single-node peak algbw `2248.8 GB/s` (67108864 bytes); connectivity probe `137.125 GB/s` payload algbw |
+| Inference headline | vLLM total throughput `1047.151 tok/s` (c=32) -> `14003.861 tok/s` (c=512); p99 TTFT `639.874 ms` -> `6826.640 ms` |
 | Operator checks | quick_friction `ok` (pass=6, failed=1, expected=1, unexpected=0), monitoring_expectations `ok` |
 | Key weird/new | Single-node NCCL env sweep can show `busbw=0.0` by definition (rank=1), while algbw is still strong. |
 
@@ -40,119 +40,120 @@ Last updated: 2026-03-07. Canonical run: `2026-03-07_localhost_modern_profile_r3
 | Excluded hosts | none |
 | GPUs per host | `1` |
 | Canonical manifest | [published/current/manifest.json](published/current/manifest.json) |
-| Canonical suite steps | [published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_suite_steps.json](published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_suite_steps.json) |
-| Meta snapshot | [published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_localhost_meta.json](published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_localhost_meta.json) |
-| Node parity summary | [published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_node_parity_summary.json](published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_node_parity_summary.json) |
-| Operator checks dashboard | [published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_operator_checks_dashboard.json](published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_operator_checks_dashboard.json) |
+| Canonical suite steps | [published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_suite_steps.json](published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_suite_steps.json) |
+| Meta snapshot | [published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_localhost_meta.json](published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_localhost_meta.json) |
+| Node parity summary | [published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_node_parity_summary.json](published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_node_parity_summary.json) |
+| Operator checks dashboard | [published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_operator_checks_dashboard.json](published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_operator_checks_dashboard.json) |
 
 ## Required Reliability Gates (Canonical Run)
 | Gate | Status | Key result | Structured artifact |
 | --- | --- | --- | --- |
-| Hang-triage readiness (`py-spy` + `strace`) | `ok` | semantic status `ok` for localhost | [published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_localhost_hang_triage_readiness.json](published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_localhost_hang_triage_readiness.json) |
-| Torchrun connectivity probe | `ok` | `world_size=1`, barrier mean `0.0701 ms`, payload algbw `119.633 GB/s` | [published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_torchrun_connectivity_probe.json](published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_torchrun_connectivity_probe.json) |
-| NCCL env sensitivity sweep | `ok` (`failure_count=0`) | baseline peak busbw `0.000` (rank-1 expected), no failed profiles | [published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_nccl_env_sensitivity.json](published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_nccl_env_sensitivity.json) |
+| Hang-triage readiness (`py-spy` + `strace`) | `ok` | semantic status `ok` for localhost | [published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_localhost_hang_triage_readiness.json](published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_localhost_hang_triage_readiness.json) |
+| Torchrun connectivity probe | `ok` | `world_size=1`, barrier mean `0.0612 ms`, payload algbw `137.125 GB/s` | [published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_torchrun_connectivity_probe.json](published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_torchrun_connectivity_probe.json) |
+| NCCL env sensitivity sweep | `ok` (`failure_count=0`) | baseline peak busbw `0.000` (rank-1 expected), no failed profiles | [published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_nccl_env_sensitivity.json](published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_nccl_env_sensitivity.json) |
 
-<p><a href="published/current/figures/2026-03-07_localhost_modern_profile_r30_full20b_nccl_env_sensitivity.png"><img src="published/current/figures/2026-03-07_localhost_modern_profile_r30_full20b_nccl_env_sensitivity.png" alt="NCCL env sensitivity localhost" width="920"/></a></p>
+<p><a href="published/current/figures/2026-03-08_localhost_modern_profile_r32_full20b_nccl_env_sensitivity.png"><img src="published/current/figures/2026-03-08_localhost_modern_profile_r32_full20b_nccl_env_sensitivity.png" alt="NCCL env sensitivity localhost" width="920"/></a></p>
 
-Data: [published/current/manifest.json](published/current/manifest.json), [published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_torchrun_connectivity_probe.json](published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_torchrun_connectivity_probe.json), [published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_nccl_env_sensitivity.json](published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_nccl_env_sensitivity.json), [published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_localhost_hang_triage_readiness.json](published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_localhost_hang_triage_readiness.json)
+Data: [published/current/manifest.json](published/current/manifest.json), [published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_torchrun_connectivity_probe.json](published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_torchrun_connectivity_probe.json), [published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_nccl_env_sensitivity.json](published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_nccl_env_sensitivity.json), [published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_localhost_hang_triage_readiness.json](published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_localhost_hang_triage_readiness.json)
 
 ## Operator Friction + Monitoring Expectations (New Checks)
 | Check | Status | Key diagnostics | Structured artifacts |
 | --- | --- | --- | --- |
-| quick_friction | `ok` | pass=6, failed=1, expected_failed=uv_torch_install, unexpected_failed=none | [published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_localhost_quick_friction.json](published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_localhost_quick_friction.json) |
-| monitoring_expectations | `ok` | control_plane=not_applicable, gpu_telemetry=ok, system_signals=ok | [published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_localhost_monitoring_expectations.json](published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_localhost_monitoring_expectations.json) |
-| operator dashboard | generated | consolidated status for quick-friction + monitoring expectations | [published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_operator_checks_dashboard.json](published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_operator_checks_dashboard.json) |
+| quick_friction | `ok` | pass=6, failed=1, expected_failed=uv_torch_install, unexpected_failed=none | [published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_localhost_quick_friction.json](published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_localhost_quick_friction.json) |
+| monitoring_expectations | `ok` | control_plane=not_applicable, gpu_telemetry=ok, system_signals=ok | [published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_localhost_monitoring_expectations.json](published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_localhost_monitoring_expectations.json) |
+| operator dashboard | generated | consolidated status for quick-friction + monitoring expectations | [published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_operator_checks_dashboard.json](published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_operator_checks_dashboard.json) |
 
-<p><a href="published/current/figures/2026-03-07_localhost_modern_profile_r30_full20b_operator_checks_dashboard.png"><img src="published/current/figures/2026-03-07_localhost_modern_profile_r30_full20b_operator_checks_dashboard.png" alt="Operator checks dashboard localhost" width="920"/></a></p>
+<p><a href="published/current/figures/2026-03-08_localhost_modern_profile_r32_full20b_operator_checks_dashboard.png"><img src="published/current/figures/2026-03-08_localhost_modern_profile_r32_full20b_operator_checks_dashboard.png" alt="Operator checks dashboard localhost" width="920"/></a></p>
 
-Data: [published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_localhost_quick_friction.json](published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_localhost_quick_friction.json), [published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_localhost_monitoring_expectations.json](published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_localhost_monitoring_expectations.json), [published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_operator_checks_dashboard.json](published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_operator_checks_dashboard.json)
+Data: [published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_localhost_quick_friction.json](published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_localhost_quick_friction.json), [published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_localhost_monitoring_expectations.json](published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_localhost_monitoring_expectations.json), [published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_operator_checks_dashboard.json](published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_operator_checks_dashboard.json)
 
 ## Cluster Story (First Contact)
 | UTC time | Milestone | Status |
 | --- | --- | --- |
-| `15:31:21` | preflight started | ok |
-| `15:31:21` | discovery started | ok |
-| `15:31:25` | quick friction completed | ok |
-| `15:32:49` | monitoring expectations completed | ok |
-| `15:33:08` | hang triage completed | ok |
-| `15:33:09` | connectivity probe completed | ok |
-| `15:33:27` | NCCL env sweep completed | ok |
-| `15:34:30` | vLLM serve sweep completed | ok |
-| `19:16:19` | operator dashboard generated | ok |
-| `19:16:20` | required artifact validation completed | error |
-| `19:16:20` | manifest refreshed | ok |
+| `04:27:31` | preflight started | ok |
+| `04:27:31` | discovery started | ok |
+| `04:27:35` | quick friction completed | ok |
+| `04:29:01` | monitoring expectations completed | ok |
+| `04:29:21` | hang triage completed | ok |
+| `04:29:21` | connectivity probe completed | ok |
+| `04:29:41` | NCCL env sweep completed | ok |
+| `04:30:46` | vLLM serve sweep completed | ok |
+| `08:40:17` | operator dashboard generated | ok |
+| `08:40:18` | required artifact validation completed | ok |
+| `08:40:19` | manifest refreshed | ok |
+| `08:40:19` | localhost report package rendered | ok |
 
-<p><a href="published/current/figures/2026-03-07_localhost_modern_profile_r30_full20b_cluster_story_dashboard.png"><img src="published/current/figures/2026-03-07_localhost_modern_profile_r30_full20b_cluster_story_dashboard.png" alt="Cluster story dashboard localhost" width="920"/></a></p>
+<p><a href="published/current/figures/2026-03-08_localhost_modern_profile_r32_full20b_cluster_story_dashboard.png"><img src="published/current/figures/2026-03-08_localhost_modern_profile_r32_full20b_cluster_story_dashboard.png" alt="Cluster story dashboard localhost" width="920"/></a></p>
 
-Data: [published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_suite_steps.json](published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_suite_steps.json)
+Data: [published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_suite_steps.json](published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_suite_steps.json)
 
 ## Weird / New / Interesting (with Normal Baseline)
 ### Baseline vs Weird Log
 | Area | Normal (canonical localhost) | Weird / notable | Why it matters | Evidence |
 | --- | --- | --- | --- | --- |
-| Preflight services | strict service checks pass | prior flake path removed (`systemctl show`-based unit check) | avoids false-negative invalidations | [published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_preflight_services.json](published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_preflight_services.json) |
-| NVLink topology parsing | topology summary generated | parser now handles single-GPU header formats robustly | keeps topology evidence reproducible on localhost | [published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_localhost_meta_nvlink_topology.json](published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_localhost_meta_nvlink_topology.json) |
-| NCCL env sweep | all profiles `ok` | `busbw=0.0` in rank-1 mode looks odd but is expected | prevents false network conclusions on 1-GPU runs | [published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_nccl_env_sensitivity.json](published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_nccl_env_sensitivity.json) |
-| Operator friction | full quick-friction battery executed | expected failures captured explicitly (`uv_torch_install` if present) | preserves operator visibility without false-red localhost status | [published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_localhost_quick_friction.json](published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_localhost_quick_friction.json) |
-| Monitoring mode | gpu/system checks run | control-plane checks can be `not_applicable` without kubeconfig | clarifies expected non-K8s behavior | [published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_localhost_monitoring_expectations.json](published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_localhost_monitoring_expectations.json) |
+| Preflight services | strict service checks pass | prior flake path removed (`systemctl show`-based unit check) | avoids false-negative invalidations | [published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_preflight_services.json](published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_preflight_services.json) |
+| NVLink topology parsing | topology summary generated | parser now handles single-GPU header formats robustly | keeps topology evidence reproducible on localhost | [published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_localhost_meta_nvlink_topology.json](published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_localhost_meta_nvlink_topology.json) |
+| NCCL env sweep | all profiles `ok` | `busbw=0.0` in rank-1 mode looks odd but is expected | prevents false network conclusions on 1-GPU runs | [published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_nccl_env_sensitivity.json](published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_nccl_env_sensitivity.json) |
+| Operator friction | full quick-friction battery executed | expected failures captured explicitly (`uv_torch_install` if present) | preserves operator visibility without false-red localhost status | [published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_localhost_quick_friction.json](published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_localhost_quick_friction.json) |
+| Monitoring mode | gpu/system checks run | control-plane checks can be `not_applicable` without kubeconfig | clarifies expected non-K8s behavior | [published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_localhost_monitoring_expectations.json](published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_localhost_monitoring_expectations.json) |
 
 ### Deep-Dive Findings
 | Finding | Baseline anchor | Reinforcement insight | Evidence |
 | --- | --- | --- | --- |
-| 1 | Preflight services | service gate remains strict while eliminating pipeline flake behavior | [published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_preflight_services.json](published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_preflight_services.json) |
-| 2 | NVLink topology parsing | single-node topology visual now lands in canonical package consistently | [published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_localhost_meta_nvlink_topology.json](published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_localhost_meta_nvlink_topology.json) |
-| 3 | Operator friction classification | expected misses are tracked separately from unexpected failures when operator checks are enabled | [published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_localhost_quick_friction.json](published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_localhost_quick_friction.json) |
+| 1 | Preflight services | service gate remains strict while eliminating pipeline flake behavior | [published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_preflight_services.json](published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_preflight_services.json) |
+| 2 | NVLink topology parsing | single-node topology visual now lands in canonical package consistently | [published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_localhost_meta_nvlink_topology.json](published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_localhost_meta_nvlink_topology.json) |
+| 3 | Operator friction classification | expected misses are tracked separately from unexpected failures when operator checks are enabled | [published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_localhost_quick_friction.json](published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_localhost_quick_friction.json) |
 
-<p><a href="published/current/figures/2026-03-07_localhost_modern_profile_r30_full20b_cluster_story_dashboard.png"><img src="published/current/figures/2026-03-07_localhost_modern_profile_r30_full20b_cluster_story_dashboard.png" alt="Weird and normal baseline dashboard localhost" width="920"/></a></p>
+<p><a href="published/current/figures/2026-03-08_localhost_modern_profile_r32_full20b_cluster_story_dashboard.png"><img src="published/current/figures/2026-03-08_localhost_modern_profile_r32_full20b_cluster_story_dashboard.png" alt="Weird and normal baseline dashboard localhost" width="920"/></a></p>
 
-Data: [published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_preflight_services.json](published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_preflight_services.json), [published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_localhost_meta_nvlink_topology.json](published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_localhost_meta_nvlink_topology.json), [published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_operator_checks_dashboard.json](published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_operator_checks_dashboard.json)
+Data: [published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_preflight_services.json](published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_preflight_services.json), [published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_localhost_meta_nvlink_topology.json](published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_localhost_meta_nvlink_topology.json), [published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_operator_checks_dashboard.json](published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_operator_checks_dashboard.json)
 
 ## Benchmark A (Networking Story)
 | Metric | Value |
 | --- | ---: |
-| NCCL single-node peak algbw | `2271.3 GB/s` |
+| NCCL single-node peak algbw | `2248.8 GB/s` |
 | Peak message size | `67108864` bytes |
-| Connectivity probe payload algbw | `119.633 GB/s` |
-| Connectivity barrier mean | `0.0701 ms` |
+| Connectivity probe payload algbw | `137.125 GB/s` |
+| Connectivity barrier mean | `0.0612 ms` |
 
 Interpretation: single-node communication path is healthy; rank-1 `busbw` should not be interpreted as fabric bottleneck evidence.
 
-<p><a href="published/current/figures/2026-03-07_localhost_modern_profile_r30_full20b_node1_nccl_bw_vs_msg.png"><img src="published/current/figures/2026-03-07_localhost_modern_profile_r30_full20b_node1_nccl_bw_vs_msg.png" alt="NCCL bandwidth localhost" width="920"/></a></p>
-<p><a href="published/current/figures/2026-03-07_localhost_modern_profile_r30_full20b_node1_nccl_scaling_efficiency.png"><img src="published/current/figures/2026-03-07_localhost_modern_profile_r30_full20b_node1_nccl_scaling_efficiency.png" alt="NCCL scaling localhost" width="920"/></a></p>
+<p><a href="published/current/figures/2026-03-08_localhost_modern_profile_r32_full20b_node1_nccl_bw_vs_msg.png"><img src="published/current/figures/2026-03-08_localhost_modern_profile_r32_full20b_node1_nccl_bw_vs_msg.png" alt="NCCL bandwidth localhost" width="920"/></a></p>
+<p><a href="published/current/figures/2026-03-08_localhost_modern_profile_r32_full20b_node1_nccl_scaling_efficiency.png"><img src="published/current/figures/2026-03-08_localhost_modern_profile_r32_full20b_node1_nccl_scaling_efficiency.png" alt="NCCL scaling localhost" width="920"/></a></p>
 
-Data: [published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_node1_nccl.json](published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_node1_nccl.json), [published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_torchrun_connectivity_probe.json](published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_torchrun_connectivity_probe.json)
+Data: [published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_node1_nccl.json](published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_node1_nccl.json), [published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_torchrun_connectivity_probe.json](published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_torchrun_connectivity_probe.json)
 
 ## Benchmark B (Inference Story)
 | Concurrency | Total tok/s | Mean TTFT (ms) | p99 TTFT (ms) | p99 TPOT (ms) |
 | ---: | ---: | ---: | ---: | ---: |
-| `32` | `1075.163` | `248.832` | `637.335` | `60.914` |
-| `64` | `2084.970` | `314.271` | `773.281` | `62.487` |
-| `128` | `4074.615` | `380.468` | `1687.460` | `64.591` |
-| `256` | `7751.586` | `547.140` | `3316.093` | `67.227` |
-| `512` | `13912.017` | `805.109` | `6658.368` | `77.902` |
+| `32` | `1047.151` | `248.964` | `639.874` | `62.117` |
+| `64` | `2113.220` | `298.283` | `563.163` | `62.681` |
+| `128` | `3997.247` | `382.302` | `1724.212` | `65.807` |
+| `256` | `7597.795` | `528.385` | `3216.429` | `68.286` |
+| `512` | `14003.861` | `815.288` | `6826.640` | `75.525` |
 
 Interpretation: throughput/latency curve is dense enough to discuss knees directly from this run.
 
-<p><a href="published/current/figures/2026-03-07_localhost_modern_profile_r30_full20b_localhost_vllm_serve_total_tok_s_vs_concurrency.png"><img src="published/current/figures/2026-03-07_localhost_modern_profile_r30_full20b_localhost_vllm_serve_total_tok_s_vs_concurrency.png" alt="vLLM throughput localhost" width="920"/></a></p>
-<p><a href="published/current/figures/2026-03-07_localhost_modern_profile_r30_full20b_localhost_vllm_serve_ttft_vs_concurrency.png"><img src="published/current/figures/2026-03-07_localhost_modern_profile_r30_full20b_localhost_vllm_serve_ttft_vs_concurrency.png" alt="vLLM TTFT localhost" width="920"/></a></p>
+<p><a href="published/current/figures/2026-03-08_localhost_modern_profile_r32_full20b_localhost_vllm_serve_total_tok_s_vs_concurrency.png"><img src="published/current/figures/2026-03-08_localhost_modern_profile_r32_full20b_localhost_vllm_serve_total_tok_s_vs_concurrency.png" alt="vLLM throughput localhost" width="920"/></a></p>
+<p><a href="published/current/figures/2026-03-08_localhost_modern_profile_r32_full20b_localhost_vllm_serve_ttft_vs_concurrency.png"><img src="published/current/figures/2026-03-08_localhost_modern_profile_r32_full20b_localhost_vllm_serve_ttft_vs_concurrency.png" alt="vLLM TTFT localhost" width="920"/></a></p>
 
-Data: [published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_localhost_vllm_serve_sweep.csv](published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_localhost_vllm_serve_sweep.csv), [published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_localhost_vllm_serve_sweep.jsonl](published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_localhost_vllm_serve_sweep.jsonl)
+Data: [published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_localhost_vllm_serve_sweep.csv](published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_localhost_vllm_serve_sweep.csv), [published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_localhost_vllm_serve_sweep.jsonl](published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_localhost_vllm_serve_sweep.jsonl)
 
 ## Required Issues (Explicit)
 | Required issue (verbatim) | Status now | Evidence |
 | --- | --- | --- |
-| Missing node2 fio artifact in canonical package (node2_fio.json absent). | Not applicable (single-node localhost scope) | [published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_localhost_fio.json](published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_localhost_fio.json) |
-| No multinode vLLM artifact in canonical package. | Not applicable (single-node localhost scope) | [published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_localhost_vllm_serve_sweep.csv](published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_localhost_vllm_serve_sweep.csv) |
-| No nvbandwidth bundle in canonical package. | Not applicable for this localhost package unless explicitly enabled | [published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_suite_steps.json](published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_suite_steps.json) |
-| Health suite had GDR requested, but effective GDR was false due non-CUDA IB local checks. | Not applicable when `--health-suite off` for localhost package | [published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_suite_steps.json](published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_suite_steps.json) |
-| Tail latency knee is severe at high concurrency (throughput up, TTFT/p99 TTFT much worse). | Observed (severe latency knee present in this sweep) | [published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_localhost_vllm_serve_sweep.csv](published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_localhost_vllm_serve_sweep.csv) |
+| Missing node2 fio artifact in canonical package (node2_fio.json absent). | Not applicable (single-node localhost scope) | [published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_localhost_fio.json](published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_localhost_fio.json) |
+| No multinode vLLM artifact in canonical package. | Not applicable (single-node localhost scope) | [published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_localhost_vllm_serve_sweep.csv](published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_localhost_vllm_serve_sweep.csv) |
+| No nvbandwidth bundle in canonical package. | Not applicable for this localhost package unless explicitly enabled | [published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_suite_steps.json](published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_suite_steps.json) |
+| Health suite had GDR requested, but effective GDR was false due non-CUDA IB local checks. | Not applicable when `--health-suite off` for localhost package | [published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_suite_steps.json](published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_suite_steps.json) |
+| Tail latency knee is severe at high concurrency (throughput up, TTFT/p99 TTFT much worse). | Observed (severe latency knee present in this sweep) | [published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_localhost_vllm_serve_sweep.csv](published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_localhost_vllm_serve_sweep.csv) |
 
 ## Root Cause + Fix Mapping
 | Issue | Root cause | Fix | Verification |
 | --- | --- | --- | --- |
-| `preflight_services` false negatives | pipeline-based unit detection could produce flaky non-zero under strict shell options | use `systemctl show -p LoadState` for deterministic service presence checks | clean preflight status in [published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_preflight_services.json](published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_preflight_services.json) and step rc=0 in [published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_suite_steps.json](published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_suite_steps.json) |
-| NVLink parser robustness | topology parser assumptions missed some single-GPU header patterns | robust tokenization and header parsing | topology summary/figure generated: [published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_localhost_meta_nvlink_topology.json](published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_localhost_meta_nvlink_topology.json) and [published/current/figures/2026-03-07_localhost_modern_profile_r30_full20b_localhost_meta_nvlink_topology.png](published/current/figures/2026-03-07_localhost_modern_profile_r30_full20b_localhost_meta_nvlink_topology.png) |
-| Quick-friction false-red localhost | missing optional internet/operator tools should be visible but classifiable | added expected-failure classification (`expected_failed_checks`) and auto localhost allowlist | quick-friction artifact shows expected vs unexpected failures: [published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_localhost_quick_friction.json](published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_localhost_quick_friction.json) |
+| `preflight_services` false negatives | pipeline-based unit detection could produce flaky non-zero under strict shell options | use `systemctl show -p LoadState` for deterministic service presence checks | clean preflight status in [published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_preflight_services.json](published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_preflight_services.json) and step rc=0 in [published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_suite_steps.json](published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_suite_steps.json) |
+| NVLink parser robustness | topology parser assumptions missed some single-GPU header patterns | robust tokenization and header parsing | topology summary/figure generated: [published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_localhost_meta_nvlink_topology.json](published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_localhost_meta_nvlink_topology.json) and [published/current/figures/2026-03-08_localhost_modern_profile_r32_full20b_localhost_meta_nvlink_topology.png](published/current/figures/2026-03-08_localhost_modern_profile_r32_full20b_localhost_meta_nvlink_topology.png) |
+| Quick-friction false-red localhost | missing optional internet/operator tools should be visible but classifiable | added expected-failure classification (`expected_failed_checks`) and auto localhost allowlist | quick-friction artifact shows expected vs unexpected failures: [published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_localhost_quick_friction.json](published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_localhost_quick_friction.json) |
 
 ## Report Completeness Delta (vs prior condensed revision)
 | Area | Prior state | Current state |
@@ -188,17 +189,17 @@ Data: [published/current/structured/2026-03-07_localhost_modern_profile_r30_full
 ## Repro Steps
 | Step | Command |
 | --- | --- |
-| Run localhost common system eval | `python -m cli.aisp cluster common-eval --preset core-system --run-id 2026-03-07_localhost_modern_profile_r30_full20b --hosts localhost --labels localhost --ssh-user $(id -un) --primary-label localhost --timeout 7200 --extra-arg --skip-bootstrap-nodes --extra-arg --disable-fp4 --extra-arg --health-suite --extra-arg off --extra-arg --skip-vllm-multinode --extra-arg --model --extra-arg openai-community/gpt2 --extra-arg --tp --extra-arg 1 --extra-arg --isl --extra-arg 128 --extra-arg --osl --extra-arg 64 --extra-arg --concurrency-range --extra-arg '1 2' --extra-arg --vllm-request-rate-range --extra-arg '1 2' --extra-arg --vllm-request-rate-max-concurrency --extra-arg 4 --extra-arg --vllm-request-rate-num-prompts --extra-arg 80 --extra-arg --fio-runtime --extra-arg 15 --extra-arg --nvbandwidth-quick` |
-| Validate localhost report package | `cluster/scripts/validate_field_report_requirements.sh --report cluster/field-report-localhost.md --notes cluster/field-report-localhost-notes.md --canonical-run-id 2026-03-07_localhost_modern_profile_r30_full20b` |
+| Run localhost common system eval | `python -m cli.aisp cluster common-eval --preset core-system --run-id 2026-03-08_localhost_modern_profile_r32_full20b --hosts localhost --labels localhost --ssh-user $(id -un) --primary-label localhost --timeout 7200 --extra-arg --skip-bootstrap-nodes --extra-arg --disable-fp4 --extra-arg --health-suite --extra-arg off --extra-arg --skip-vllm-multinode --extra-arg --model --extra-arg openai-community/gpt2 --extra-arg --tp --extra-arg 1 --extra-arg --isl --extra-arg 128 --extra-arg --osl --extra-arg 64 --extra-arg --concurrency-range --extra-arg '1 2' --extra-arg --vllm-request-rate-range --extra-arg '1 2' --extra-arg --vllm-request-rate-max-concurrency --extra-arg 4 --extra-arg --vllm-request-rate-num-prompts --extra-arg 80 --extra-arg --fio-runtime --extra-arg 15 --extra-arg --nvbandwidth-quick` |
+| Validate localhost report package | `cluster/scripts/validate_field_report_requirements.sh --report cluster/field-report-localhost.md --notes cluster/field-report-localhost-notes.md --canonical-run-id 2026-03-08_localhost_modern_profile_r32_full20b` |
 
 ## Reproducibility Package
 | Artifact class | Links |
 | --- | --- |
-| Manifest + suite | [published/current/manifest.json](published/current/manifest.json), [published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_suite_steps.json](published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_suite_steps.json) |
-| Reliability gates | [published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_localhost_hang_triage_readiness.json](published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_localhost_hang_triage_readiness.json), [published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_torchrun_connectivity_probe.json](published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_torchrun_connectivity_probe.json), [published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_nccl_env_sensitivity.json](published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_nccl_env_sensitivity.json) |
-| Operator checks | [published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_localhost_quick_friction.json](published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_localhost_quick_friction.json), [published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_localhost_monitoring_expectations.json](published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_localhost_monitoring_expectations.json), [published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_operator_checks_dashboard.json](published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_operator_checks_dashboard.json) |
-| Core benchmarks | [published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_node1_nccl.json](published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_node1_nccl.json), [published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_localhost_vllm_serve_sweep.csv](published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_localhost_vllm_serve_sweep.csv), [published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_localhost_gemm_gpu_sanity.csv](published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_localhost_gemm_gpu_sanity.csv), [published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_localhost_fio.json](published/current/structured/2026-03-07_localhost_modern_profile_r30_full20b_localhost_fio.json) |
-| Figures | [published/current/figures/2026-03-07_localhost_modern_profile_r30_full20b_cluster_story_dashboard.png](published/current/figures/2026-03-07_localhost_modern_profile_r30_full20b_cluster_story_dashboard.png), [published/current/figures/2026-03-07_localhost_modern_profile_r30_full20b_operator_checks_dashboard.png](published/current/figures/2026-03-07_localhost_modern_profile_r30_full20b_operator_checks_dashboard.png), [published/current/figures/2026-03-07_localhost_modern_profile_r30_full20b_node1_nccl_bw_vs_msg.png](published/current/figures/2026-03-07_localhost_modern_profile_r30_full20b_node1_nccl_bw_vs_msg.png), [published/current/figures/2026-03-07_localhost_modern_profile_r30_full20b_localhost_vllm_serve_total_tok_s_vs_concurrency.png](published/current/figures/2026-03-07_localhost_modern_profile_r30_full20b_localhost_vllm_serve_total_tok_s_vs_concurrency.png) |
+| Manifest + suite | [published/current/manifest.json](published/current/manifest.json), [published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_suite_steps.json](published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_suite_steps.json) |
+| Reliability gates | [published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_localhost_hang_triage_readiness.json](published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_localhost_hang_triage_readiness.json), [published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_torchrun_connectivity_probe.json](published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_torchrun_connectivity_probe.json), [published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_nccl_env_sensitivity.json](published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_nccl_env_sensitivity.json) |
+| Operator checks | [published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_localhost_quick_friction.json](published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_localhost_quick_friction.json), [published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_localhost_monitoring_expectations.json](published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_localhost_monitoring_expectations.json), [published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_operator_checks_dashboard.json](published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_operator_checks_dashboard.json) |
+| Core benchmarks | [published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_node1_nccl.json](published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_node1_nccl.json), [published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_localhost_vllm_serve_sweep.csv](published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_localhost_vllm_serve_sweep.csv), [published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_localhost_gemm_gpu_sanity.csv](published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_localhost_gemm_gpu_sanity.csv), [published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_localhost_fio.json](published/current/structured/2026-03-08_localhost_modern_profile_r32_full20b_localhost_fio.json) |
+| Figures | [published/current/figures/2026-03-08_localhost_modern_profile_r32_full20b_cluster_story_dashboard.png](published/current/figures/2026-03-08_localhost_modern_profile_r32_full20b_cluster_story_dashboard.png), [published/current/figures/2026-03-08_localhost_modern_profile_r32_full20b_operator_checks_dashboard.png](published/current/figures/2026-03-08_localhost_modern_profile_r32_full20b_operator_checks_dashboard.png), [published/current/figures/2026-03-08_localhost_modern_profile_r32_full20b_node1_nccl_bw_vs_msg.png](published/current/figures/2026-03-08_localhost_modern_profile_r32_full20b_node1_nccl_bw_vs_msg.png), [published/current/figures/2026-03-08_localhost_modern_profile_r32_full20b_localhost_vllm_serve_total_tok_s_vs_concurrency.png](published/current/figures/2026-03-08_localhost_modern_profile_r32_full20b_localhost_vllm_serve_total_tok_s_vs_concurrency.png) |
 
 ## Appendix (Coverage vs Case-Study Goals)
 | Case-study goal | Coverage |
@@ -212,14 +213,15 @@ Data: [published/current/structured/2026-03-07_localhost_modern_profile_r30_full
 ## Activity Log
 | UTC | Action | Result |
 | --- | --- | --- |
-| `15:31:21` | preflight started | ok |
-| `15:31:21` | discovery started | ok |
-| `15:31:25` | quick friction completed | ok |
-| `15:32:49` | monitoring expectations completed | ok |
-| `15:33:08` | hang triage completed | ok |
-| `15:33:09` | connectivity probe completed | ok |
-| `15:33:27` | NCCL env sweep completed | ok |
-| `15:34:30` | vLLM serve sweep completed | ok |
-| `19:16:19` | operator dashboard generated | ok |
-| `19:16:20` | required artifact validation completed | error |
-| `19:16:20` | manifest refreshed | ok |
+| `04:27:31` | preflight started | ok |
+| `04:27:31` | discovery started | ok |
+| `04:27:35` | quick friction completed | ok |
+| `04:29:01` | monitoring expectations completed | ok |
+| `04:29:21` | hang triage completed | ok |
+| `04:29:21` | connectivity probe completed | ok |
+| `04:29:41` | NCCL env sweep completed | ok |
+| `04:30:46` | vLLM serve sweep completed | ok |
+| `08:40:17` | operator dashboard generated | ok |
+| `08:40:18` | required artifact validation completed | ok |
+| `08:40:19` | manifest refreshed | ok |
+| `08:40:19` | localhost report package rendered | ok |
